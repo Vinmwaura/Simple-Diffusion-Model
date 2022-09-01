@@ -23,7 +23,7 @@ class TimeEmbedding(nn.Module):
         self.embedding_dim = embedding_dim
 
         self.fc_layer = nn.Sequential(
-            nn.Linear(self.embedding_dim//2, self.embedding_dim),
+            nn.Linear(self.embedding_dim, self.embedding_dim),
             Swish(),
             nn.Linear(self.embedding_dim, self.embedding_dim)
         )
@@ -177,7 +177,8 @@ class Upsample(nn.Module):
             stride=2,
             padding=1)
 
-    def forward(self, x):
+    def forward(self, x, t):
+        _ = t
         x = self.conv(x)
         return x
 
@@ -195,7 +196,8 @@ class Downsample(nn.Module):
             stride=2,
             padding=1)
 
-    def forward(self, x):
+    def forward(self, x, t):
+        _ = t
         x = self.conv(x)
         return x
 
