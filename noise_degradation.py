@@ -11,6 +11,10 @@ class NoiseDegradation(nn.Module):
         if eps is None:
             eps = torch.randn_like(img)
         
+        if isinstance(step, torch.Tensor):
+            # Add dimension: (N,1, 1, 1).
+            step = step[:,None, None, None]
+        
         alpha = 1 - self.beta
         img_degradation = (alpha**step)**0.5 * img + (1 - alpha**step)**0.5 * eps  # X_t
         return img_degradation
