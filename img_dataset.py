@@ -13,7 +13,7 @@ class ImageDataset(Dataset):
         self.img_paths = img_paths
 
     def __len__(self):
-        return len(self.img_list)
+        return len(self.img_paths)
     
     def __getitem__(self, index):
         assert len(self.img_paths) > 0
@@ -30,5 +30,5 @@ class ImageDataset(Dataset):
         img_tensor = torch.from_numpy(img).float()
         
         # Permute image to be of format: [C,H,W]
-        img_tensor = img_tensor.permute(2)
+        img_tensor = img_tensor.permute(2, 0, 1)
         return img_tensor

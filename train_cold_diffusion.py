@@ -39,11 +39,11 @@ def main():
     config_checkpoint = None
 
     # Model Params.
-    diffusion_lr = 0.0001
-    batch_size = 16
+    diffusion_lr = 2e-5
+    batch_size = 14
     
     # Diffusion Params.
-    beta = 0.001
+    beta = 5e-3
     min_noise_step = 1
     max_noise_step = 1000
 
@@ -73,7 +73,7 @@ def main():
     assert len(img_list) > 0
     
     # Dataset and DataLoader.
-    dataset = ImageDataset(img_list=img_list)
+    dataset = ImageDataset(img_paths=img_list)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -150,13 +150,17 @@ def main():
             
             # Enable autocasting for mixed precision.
             with torch.cuda.amp.autocast():
+                # eps Noise.
+                noise = torch.randn_like(tr_data)
+
                 # D(x_0, t) = x_t
                 x_degraded = noise_degradation(
                     img=tr_data,
-                    step=rand_noise_step)
+                    step=rand_noise_step,
+                    eps=noise)
                 
                 # R(x_t, t) = x_0
-                x_restoration = diffusion_net(x_degraded)
+                x_restoration = diffusion_net(x_degraded, rand_noise_step)
                 
                 # min || R(D(x,t), t) - x ||
                 restoration_loss = F.l1_loss(
@@ -214,12 +218,16 @@ def main():
                 frozen at the start of the generation process, and then treated as a constant.
                 """
                 with torch.no_grad():
-                    noise = torch.randn((len(tr_data), 3, 128, 128), device=device)
+                    noise = torch.randn((25, 3, 128, 128), device=device)
                     x_degraded_hat = 1 * noise
-
+                    
                     for noise_step in range(max_noise_step, min_noise_step - 1, -1):
+                        time_step = torch.tensor([noise_step], device=device)
+                        
                         # R(x_s, s) = x_hat_0
-                        x_restoration_hat = diffusion_net(x_degraded_hat)
+                        x_restoration_hat = diffusion_net(
+                            x_degraded_hat,
+                            time_step)
 
                         if noise_step - 1 > 0:
                             # D(x_hat_0, s) = x_s
@@ -231,26 +239,28 @@ def main():
                             # D(x_hat_0, s-1) = x_s-1
                             x_degraded_next_noise_lvl = noise_degradation(
                                 img=x_restoration_hat,
-                                step=noise_step-1,
+                                step=noise_step - 1,
                                 eps=noise)
 
-                            x_degraded_hat = x_degraded_hat - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
-
+                        x_degraded_hat = x_degraded_hat - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
+                    
                     plot_sampled_images(
-                        sampled_imgs=x_restoration_hat,
+                        sampled_imgs=x_degraded_hat,
                         file_name=f"diffusion_plot_{global_steps}",
                         dest_path=out_dir)
+            
+            temp_avg_diffusion = total_diffusion_loss / training_count
 
-                temp_avg_diffusion = total_diffusion_loss / training_count
+            message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
+                global_steps + 1,
+                index + 1,
+                len(dataloader),
+                temp_avg_diffusion, 
+                diffusion_optim.param_groups[0]['lr']
+            )
+            logging.info(message)
 
-                message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
-                    global_steps + 1,
-                    index + 1,
-                    len(dataloader),
-                    temp_avg_diffusion, 
-                    diffusion_optim.param_groups[0]['lr']
-                )
-                logging.info(message)
+            global_steps += 1
 
         # Checkpoint and Plot Images.
         config_state = {

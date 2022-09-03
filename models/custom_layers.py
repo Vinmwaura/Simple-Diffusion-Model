@@ -124,15 +124,7 @@ class ResidualBlock(nn.Module):
             Swish(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         )
-        """
-        self.norm1 = nn.GroupNorm(n_groups, in_channels)
-        self.act1 = Swish()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), padding=(1, 1))
 
-        self.norm2 = nn.GroupNorm(n_groups, out_channels)
-        self.act2 = Swish()
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3), padding=(1, 1))
-        """
         if in_channels != out_channels:
             self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
         else:
@@ -155,12 +147,6 @@ class ResidualBlock(nn.Module):
         
         # Residual Operation.
         x = x + self.shortcut(init_x)
-        """
-        h = self.conv1(self.act1(self.norm1(x)))
-        h += self.time_emb(t)[:, :, None, None]
-        h = self.conv2(self.act2(self.norm2(h)))
-        return h + self.shortcut(x)
-        """
         return x
 
 
