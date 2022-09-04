@@ -35,15 +35,17 @@ def main():
     max_epoch = 1000
     dataset_path = ""
     out_dir = ""
+
     diffusion_checkpoint = None
     config_checkpoint = None
 
     # Model Params.
     diffusion_lr = 2e-5
-    batch_size = 14
+    batch_size = 16
     
     # Diffusion Params.
-    beta = 5e-3
+    min_variance_val = 0.0001
+    max_variance_val = 0.02
     min_noise_step = 1
     max_noise_step = 1000
 
@@ -91,7 +93,8 @@ def main():
         config_status, config_dict = load_checkpoint(config_checkpoint)
         assert config_status
 
-        beta = config_dict["beta"]
+        min_variance_val = config_dict["min_variance_val"]
+        max_variance_val = config_dict["max_variance_val"]
         min_noise_step = config_dict["min_noise_step"]
         max_noise_step = config_dict["max_noise_step"]
         starting_epoch = config_dict["starting_epoch"]
@@ -117,13 +120,19 @@ def main():
     logging.info(f"Batch size: {batch_size:,}")
     logging.info("#" * 100)
     logging.info(f"Diffusion Parameters:")
-    logging.info(f"Diffusion Beta: {beta:,.3f}")
+    logging.info(f"Diffusion Min Variance: {min_variance_val:,.5f}")
+    logging.info(f"Diffusion Max Variance: {max_variance_val:,.5f}")
     logging.info(f"Min Noise Step: {min_noise_step:,}")
     logging.info(f"Max Noise Step: {max_noise_step:,}")
     logging.info("#" * 100)
 
     # x_t = D(x_0 | t).
-    noise_degradation = NoiseDegradation(beta=beta)
+    noise_degradation = NoiseDegradation(
+        device,
+        max_noise_step,
+        min_variance_val,
+        max_variance_val
+    )
 
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
@@ -156,7 +165,7 @@ def main():
                 # D(x_0, t) = x_t
                 x_degraded = noise_degradation(
                     img=tr_data,
-                    step=rand_noise_step,
+                    steps=rand_noise_step,
                     eps=noise)
                 
                 # R(x_t, t) = x_0
@@ -186,7 +195,8 @@ def main():
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
                 config_state = {
-                    "beta": beta,
+                    "min_variance_val": min_variance_val,
+                    "max_variance_val": max_variance_val,
                     "min_noise_step": min_noise_step,
                     "max_noise_step": max_noise_step,
                     "starting_epoch": starting_epoch,
@@ -219,33 +229,33 @@ def main():
                 """
                 with torch.no_grad():
                     noise = torch.randn((25, 3, 128, 128), device=device)
-                    x_degraded_hat = 1 * noise
+                    x_less_degraded = 1 * noise
                     
                     for noise_step in range(max_noise_step, min_noise_step - 1, -1):
                         time_step = torch.tensor([noise_step], device=device)
                         
                         # R(x_s, s) = x_hat_0
                         x_restoration_hat = diffusion_net(
-                            x_degraded_hat,
+                            x_less_degraded,
                             time_step)
 
-                        if noise_step - 1 > 0:
-                            # D(x_hat_0, s) = x_s
-                            x_degraded_current_noise_lvl = noise_degradation(
-                                img=x_restoration_hat,
-                                step=noise_step,
-                                eps=noise)
-                            
-                            # D(x_hat_0, s-1) = x_s-1
-                            x_degraded_next_noise_lvl = noise_degradation(
-                                img=x_restoration_hat,
-                                step=noise_step - 1,
-                                eps=noise)
+                        # D(x_hat_0, s) = x_s
+                        x_degraded_current_noise_lvl = noise_degradation(
+                            img=x_restoration_hat,
+                            steps=time_step,
+                            eps=noise)
+                        
+                        # D(x_hat_0, s-1) = x_s-1
+                        x_degraded_next_noise_lvl = noise_degradation(
+                            img=x_restoration_hat,
+                            steps=time_step - 1,
+                            eps=noise)
 
-                        x_degraded_hat = x_degraded_hat - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
+                        # x_s-1 = x_s - D(x_0_hat, s) + D(x_0_hat, s - 1)
+                        x_less_degraded = x_less_degraded - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
                     
                     plot_sampled_images(
-                        sampled_imgs=x_degraded_hat,
+                        sampled_imgs=x_less_degraded,
                         file_name=f"diffusion_plot_{global_steps}",
                         dest_path=out_dir)
             
@@ -264,7 +274,8 @@ def main():
 
         # Checkpoint and Plot Images.
         config_state = {
-            "beta": beta,
+            "min_variance_val": min_variance_val,
+            "max_variance_val": max_variance_val,
             "min_noise_step": min_noise_step,
             "max_noise_step": max_noise_step,
             "starting_epoch": starting_epoch,
