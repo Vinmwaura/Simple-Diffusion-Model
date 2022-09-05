@@ -1,129 +1,114 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .custom_layers import *
 
 
 """
-U-Net based model as defined in DDPM.
+Simpler U-Net Architecture.
 """
 class U_Net(nn.Module):
-    def __init__(
-            self,
-            img_channel=3,
-            init_channel=64,
-            channel_mults=[1, 2, 2, 2],
-            is_attn=[False, False, True, True],
-            num_blocks=2):
-
+    def __init__(self, img_dim=64):
         super().__init__()
-        
-        # Number of layers in down and up layers in UNet.
-        num_resolutions = len(channel_mults)
-        
-        # Project image into feature map.
-        self.image_proj = nn.Conv2d(
-            img_channel,
-            init_channel,
-            kernel_size=3,
-            padding=1)
+
+        self.min_dim = 4
+        self.max_dim = 1024
+
+        if img_dim <= self.min_dim or img_dim >= self.max_dim or img_dim % 4 != 0:
+            raise Exception(f"Image dimension must be between {self.min_dim:,} and {self.max_dim:,} and be multiple of 4")
+
+        self.min_channel = 64
+        self.max_channel = 512
         
         # Time Embedding Layer.
-        self.time_emb = TimeEmbedding(init_channel)  # 64
+        self.time_emb = TimeEmbedding(self.min_channel)
         
-        out_channel = in_channel = init_channel  # 64
-        
+        current_dim = img_dim
+        current_channel = self.min_channel
+
+        prev_channel_list = []
+
+        self.init_layer = UNetResidualBlock(
+            in_channels=3,
+            hidden_channels=current_channel,
+            out_channels=current_channel,
+            time_channel=self.min_channel,
+            use_group_norm=False)
+
         # Down Section.
-        down_list = []
-        for index in range(num_resolutions):
-            # Multiply channel size with multiplers for each layer.
-            out_channel = in_channel * channel_mults[index]
-            
-            # Adds multiple block in each layer.
-            for _ in range(num_blocks):
-                down_list.append(
-                    DownBlock(
-                        in_channel,
-                        out_channel,
-                        init_channel,
-                        is_attn[index])
-                )
+        self.down_layers = nn.ModuleList()
+        
+        while current_dim > self.min_dim:
+            self.down_layers.append(
+                UNetResidualBlock(
+                    in_channels=current_channel,
+                    hidden_channels=current_channel,
+                    out_channels=self.max_channel if current_channel * 2 > self.max_channel else current_channel * 2,
+                    time_channel=self.min_channel))
 
-                in_channel = out_channel
+            prev_channel_list.append(current_channel)
 
-            # Downsample all resolutions except the last.
-            if index < num_resolutions - 1:
-                down_list.append(Downsample(in_channel))
-
-        self.down_layers = nn.ModuleList(down_list)
+            current_channel = self.max_channel if current_channel * 2 > self.max_channel else current_channel * 2
+            current_dim /= 2
+        
+        prev_channel_list.append(current_channel)
         
         # Middle Section.
-        self.middle_layer = MiddleBlock(out_channel, init_channel)
+        # 4 -> 4.
+        self.middle_layer = MiddleBlock(
+            channels=current_channel,
+            time_channel=self.min_channel)
 
         # Up Section.
-        up_list = []
-
-        in_channel = out_channel
-
-        for index_reversed in reversed(range(num_resolutions)):
-            out_channel = in_channel
-            for _ in range(num_blocks):
-                up_list.append(
-                    UpBlock(
-                        in_channel,
-                        out_channel,
-                        init_channel,
-                        is_attn[index_reversed])
-                )
-            out_channel = in_channel // channel_mults[index_reversed]
-            
-            up_list.append(
-                UpBlock(
-                    in_channel,
-                    out_channel,
-                    init_channel,
-                    is_attn[index_reversed]))
-            
-            in_channel = out_channel
-
-            if index_reversed > 0:
-                up_list.append(Upsample(in_channel))
+        index = 0
+        prev_channel_list.reverse()
         
-        self.up_layers = nn.ModuleList(up_list)
+        self.up_layers = nn.ModuleList()
+        while current_dim < img_dim:
+            self.up_layers.append(
+                UNetResidualBlock(
+                    in_channels=prev_channel_list[index] * 2,
+                    hidden_channels=prev_channel_list[index],
+                    out_channels=prev_channel_list[index + 1],
+                    time_channel=self.min_channel),
+            )
+            index += 1
+            current_dim *= 2
         
-        # Final Normalization and Conv Layer.
-        self.final_layer = nn.Sequential(
-            nn.GroupNorm(8, init_channel),
-            Swish(),
-            nn.Conv2d(in_channel, img_channel, kernel_size=3, padding=1)
+        self.out_to_rgb = nn.Sequential(
+            ConvBlock(
+                in_channels=prev_channel_list[index],
+                out_channels=prev_channel_list[index]),
+            ConvBlock_toRGB(prev_channel_list[index])
         )
-
-    def forward(self, x, t):
-        prev_out = []
-        
-        # Initial Layer: Image Projection and time embedding.
-        x = self.image_proj(x)
+    def forward(self, x, t=0):
+        # Time Embedding (x + t).
         t = self.time_emb(t)
-        
-        prev_out.append(x)
-        
+        # t = t[:, :, None, None]
+
+        # Init Layer
+        x = self.init_layer(x, t)
+
+        prev_out = []
+
         # Down Section.
         for down_layer in self.down_layers:
             x = down_layer(x, t)
             prev_out.append(x)
+            x = F.max_pool2d(x, kernel_size=2)
         
         # Middle Section.
         x = self.middle_layer(x, t)
-
+        
         # Up Section.
         for up_layer in self.up_layers:
-            if isinstance(up_layer, Upsample):
-                x = up_layer(x, t)
-            else:
-                prev_down_out = prev_out.pop()
-                x = torch.cat((x, prev_down_out), dim=1)
-                x = up_layer(x, t)
+            x = F.interpolate(x, scale_factor=2)
+            prev_in = prev_out.pop()
+            
+            x = torch.cat((x, prev_in), dim=1)
+            x = up_layer(x, t)
 
-        # Final Layer.
-        x = self.final_layer(x)
+        x = self.out_to_rgb(x)
         return x
+

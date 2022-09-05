@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+import torchvision
+
 
 class NoiseDegradation(nn.Module):
     def __init__(
@@ -23,3 +25,4 @@ class NoiseDegradation(nn.Module):
         alpha_bar = alpha_bar[:, None, None, None]
         img_degradation = alpha_bar**0.5 * img + (1 - alpha_bar)**0.5 * eps
         return img_degradation
+

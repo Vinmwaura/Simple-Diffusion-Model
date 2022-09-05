@@ -17,8 +17,8 @@ from models.U_Net import U_Net
 # Custom Image Dataset Loader.
 from img_dataset import ImageDataset
 
-# Noise Degradation.
-from noise_degradation import NoiseDegradation
+# Degradation Operators.
+from degraders import *
 
 from utils import *
 
@@ -131,9 +131,9 @@ def main():
         device,
         max_noise_step,
         min_variance_val,
-        max_variance_val
-    )
-
+        max_variance_val)
+    
+    
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
         total_diffusion_loss = 0
@@ -157,11 +157,14 @@ def main():
                 size=(len(tr_data), ),
                 device=device)
             
+            # eps Noise.
+            noise = torch.randn_like(tr_data)
+
+            # Train model.
+            diffusion_net.train()
+
             # Enable autocasting for mixed precision.
             with torch.cuda.amp.autocast():
-                # eps Noise.
-                noise = torch.randn_like(tr_data)
-
                 # D(x_0, t) = x_t
                 x_degraded = noise_degradation(
                     img=tr_data,
@@ -169,13 +172,15 @@ def main():
                     eps=noise)
                 
                 # R(x_t, t) = x_0
-                x_restoration = diffusion_net(x_degraded, rand_noise_step)
+                x_restoration = diffusion_net(
+                    x_degraded,
+                    rand_noise_step)
                 
                 # min || R(D(x,t), t) - x ||
-                restoration_loss = F.l1_loss(
+                restoration_loss = F.mse_loss(
                     x_restoration,
                     tr_data)
-            
+                
             # Scale the loss and do backprop.
             scaler.scale(restoration_loss).backward()
             
@@ -227,6 +232,9 @@ def main():
                 Generation using deterministic noise degradation. Noise pattern is selected and
                 frozen at the start of the generation process, and then treated as a constant.
                 """
+                # Evaluate model.
+                diffusion_net.eval()
+
                 with torch.no_grad():
                     noise = torch.randn((25, 3, 128, 128), device=device)
                     x_less_degraded = 1 * noise
@@ -253,7 +261,7 @@ def main():
 
                         # x_s-1 = x_s - D(x_0_hat, s) + D(x_0_hat, s - 1)
                         x_less_degraded = x_less_degraded - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
-                    
+
                     plot_sampled_images(
                         sampled_imgs=x_less_degraded,
                         file_name=f"diffusion_plot_{global_steps}",

@@ -107,103 +107,103 @@ class AttentionBlock(nn.Module):
         return res
 
 
+# Simpler Layers.
 """
-Residual Block.
+Conv. Block.
 """
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_channels, n_groups=32):
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, use_group_norm=False, groups=32):
+        super().__init__()
+        if use_group_norm:
+            self.conv_layer = nn.Sequential(
+                nn.GroupNorm(groups, in_channels),
+                Swish(),
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=3,
+                    padding=1),
+            )
+        else:
+            self.conv_layer = nn.Sequential(
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=3,
+                    padding=1),
+                Swish(),
+            )
+
+    def forward(self, in_data):
+        out = self.conv_layer(in_data)
+        return out
+
+
+"""
+Conv. Block toRGB.
+"""
+class ConvBlock_toRGB(nn.Module):
+    def __init__(self, in_channel):
         super().__init__()
 
-        self.conv_blk_1 = nn.Sequential(
-            nn.GroupNorm(n_groups, in_channels),
-            Swish(),
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        )
-        self.conv_blk_2 = nn.Sequential(
-            nn.GroupNorm(n_groups, out_channels),
-            Swish(),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.conv_layer = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channel,
+                out_channels=3,
+                kernel_size=3,
+                stride=1,
+                padding=1),
+            nn.Tanh()
         )
 
+    def forward(self, in_data):
+        out = self.conv_layer(in_data)
+        return out
+
+
+"""
+Residual Conv. Block.
+"""
+class UNetResidualBlock(nn.Module):
+    def __init__(
+            self,
+            in_channels,
+            hidden_channels,
+            out_channels,
+            time_channel,
+            use_group_norm=True):
+        super().__init__()
+
+        self.conv_block_1 = ConvBlock(
+            in_channels,
+            hidden_channels,
+            use_group_norm=use_group_norm)
+        
+        self.conv_block_2 = ConvBlock(
+            hidden_channels,
+            out_channels,
+            use_group_norm=True)
+
         if in_channels != out_channels:
-            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+            self.shortcut = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=(1, 1))
         else:
             self.shortcut = nn.Identity()
         
-        self.time_emb = nn.Linear(time_channels, out_channels)
-        
-
+        self.time_emb = nn.Linear(time_channel, hidden_channels)
+    
     def forward(self, x, t):
         init_x = x
-        # First Conv Block.
-        x = self.conv_blk_1(init_x)
+        x = self.conv_block_1(x)
         
         # Time Embedding.
         t = self.time_emb(t)[:, :, None, None]
         x = x + t
-
-        # Second Conv Block. 
-        x = self.conv_blk_2(x)
         
-        # Residual Operation.
+        x = self.conv_block_2(x)
         x = x + self.shortcut(init_x)
-        return x
-
-
-"""
-Upsample using ConvTranspose2d.
-"""
-class Upsample(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv = nn.ConvTranspose2d(
-            channels,
-            channels,
-            kernel_size=4,
-            stride=2,
-            padding=1)
-
-    def forward(self, x, t):
-        _ = t
-        x = self.conv(x)
-        return x
-
-
-"""
-Downsample using Conv2d
-"""
-class Downsample(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv = nn.Conv2d(
-            channels,
-            channels,
-            kernel_size=3,
-            stride=2,
-            padding=1)
-
-    def forward(self, x, t):
-        _ = t
-        x = self.conv(x)
-        return x
-
-
-"""
-U-Net DownBlock.
-"""
-class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_channels, has_attn):
-        super().__init__()
-        
-        self.res = ResidualBlock(in_channels, out_channels, time_channels)
-        if has_attn:
-            self.attn = AttentionBlock(out_channels)
-        else:
-            self.attn = nn.Identity()
-        
-    def forward(self, x, t):
-        x = self.res(x, t)
-        x = self.attn(x)
         return x
 
 
@@ -211,34 +211,28 @@ class DownBlock(nn.Module):
 U-Net MiddleBlock.
 """
 class MiddleBlock(nn.Module):
-    def __init__(self, n_channels, time_channels):
+    def __init__(
+            self,
+            channels,
+            time_channel):
         super().__init__()
+
+        self.res_blk_1 = UNetResidualBlock(
+            in_channels=channels,
+            hidden_channels=channels,
+            out_channels=channels,
+            time_channel=time_channel)
         
-        self.res1 = ResidualBlock(n_channels, n_channels, time_channels)        
-        self.attn = AttentionBlock(n_channels)
-        self.res2 = ResidualBlock(n_channels, n_channels, time_channels)
-
-    def forward(self, x, t):
-        x = self.res1(x, t)
-        x = self.attn(x)
-        x = self.res2(x, t)
-        return x
-
-
-"""
-U-Net UpBlock.
-"""
-class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_channels, has_attn):
-        super().__init__()
+        self.res_blk_2 = UNetResidualBlock(
+            in_channels=channels,
+            hidden_channels=channels,
+            out_channels=channels,
+            time_channel=time_channel)
         
-        self.res = ResidualBlock(in_channels + out_channels, out_channels, time_channels)
-        if has_attn:
-            self.attn = AttentionBlock(out_channels)
-        else:
-            self.attn = nn.Identity()
+        self.attn = AttentionBlock(channels)
         
     def forward(self, x, t):
-        x = self.res(x, t)
+        x = self.res_blk_1(x, t)
         x = self.attn(x)
+        x = self.res_blk_2(x, t)
         return x
