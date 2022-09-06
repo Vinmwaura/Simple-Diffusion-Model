@@ -44,8 +44,7 @@ def main():
     batch_size = 16
     
     # Diffusion Params.
-    min_variance_val = 0.0001
-    max_variance_val = 0.02
+    beta = 0.005
     min_noise_step = 1
     max_noise_step = 1000
 
@@ -93,8 +92,7 @@ def main():
         config_status, config_dict = load_checkpoint(config_checkpoint)
         assert config_status
 
-        min_variance_val = config_dict["min_variance_val"]
-        max_variance_val = config_dict["max_variance_val"]
+        beta = config_dict["beta"]
         min_noise_step = config_dict["min_noise_step"]
         max_noise_step = config_dict["max_noise_step"]
         starting_epoch = config_dict["starting_epoch"]
@@ -120,19 +118,13 @@ def main():
     logging.info(f"Batch size: {batch_size:,}")
     logging.info("#" * 100)
     logging.info(f"Diffusion Parameters:")
-    logging.info(f"Diffusion Min Variance: {min_variance_val:,.5f}")
-    logging.info(f"Diffusion Max Variance: {max_variance_val:,.5f}")
+    logging.info(f"Diffusion Beta: {beta:,.5f}")
     logging.info(f"Min Noise Step: {min_noise_step:,}")
     logging.info(f"Max Noise Step: {max_noise_step:,}")
     logging.info("#" * 100)
 
     # x_t = D(x_0 | t).
-    noise_degradation = NoiseDegradation(
-        device,
-        max_noise_step,
-        min_variance_val,
-        max_variance_val)
-    
+    noise_degradation = NoiseDegradation(beta)
     
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
@@ -200,8 +192,7 @@ def main():
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
                 config_state = {
-                    "min_variance_val": min_variance_val,
-                    "max_variance_val": max_variance_val,
+                    "beta": beta,
                     "min_noise_step": min_noise_step,
                     "max_noise_step": max_noise_step,
                     "starting_epoch": starting_epoch,
@@ -282,8 +273,7 @@ def main():
 
         # Checkpoint and Plot Images.
         config_state = {
-            "min_variance_val": min_variance_val,
-            "max_variance_val": max_variance_val,
+            "beta": beta,
             "min_noise_step": min_noise_step,
             "max_noise_step": max_noise_step,
             "starting_epoch": starting_epoch,
