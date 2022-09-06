@@ -169,7 +169,7 @@ def main():
                     rand_noise_step)
                 
                 # min || R(D(x,t), t) - x ||
-                restoration_loss = F.mse_loss(
+                restoration_loss = F.l1_loss(
                     x_restoration,
                     tr_data)
                 
@@ -223,41 +223,42 @@ def main():
                 Generation using deterministic noise degradation. Noise pattern is selected and
                 frozen at the start of the generation process, and then treated as a constant.
                 """
-                # Evaluate model.
-                diffusion_net.eval()
+                if global_steps > 0:
+                    # Evaluate model.
+                    diffusion_net.eval()
 
-                with torch.no_grad():
-                    noise = torch.randn((25, 3, 128, 128), device=device)
-                    x_less_degraded = 1 * noise
-                    
-                    for noise_step in range(max_noise_step, min_noise_step - 1, -1):
-                        time_step = torch.tensor([noise_step], device=device)
+                    with torch.no_grad():
+                        noise = torch.randn((25, 3, 128, 128), device=device)
+                        x_less_degraded = 1 * noise
                         
-                        # R(x_s, s) = x_hat_0
-                        x_restoration_hat = diffusion_net(
-                            x_less_degraded,
-                            time_step)
+                        for noise_step in range(max_noise_step, min_noise_step - 1, -1):
+                            time_step = torch.tensor([noise_step], device=device)
+                            
+                            # R(x_s, s) = x_hat_0
+                            x_restoration_hat = diffusion_net(
+                                x_less_degraded,
+                                time_step)
 
-                        # D(x_hat_0, s) = x_s
-                        x_degraded_current_noise_lvl = noise_degradation(
-                            img=x_restoration_hat,
-                            steps=time_step,
-                            eps=noise)
-                        
-                        # D(x_hat_0, s-1) = x_s-1
-                        x_degraded_next_noise_lvl = noise_degradation(
-                            img=x_restoration_hat,
-                            steps=time_step - 1,
-                            eps=noise)
+                            # D(x_hat_0, s) = x_s
+                            x_degraded_current_noise_lvl = noise_degradation(
+                                img=x_restoration_hat,
+                                steps=time_step,
+                                eps=noise)
+                            
+                            # D(x_hat_0, s-1) = x_s-1
+                            x_degraded_next_noise_lvl = noise_degradation(
+                                img=x_restoration_hat,
+                                steps=time_step - 1,
+                                eps=noise)
 
-                        # x_s-1 = x_s - D(x_0_hat, s) + D(x_0_hat, s - 1)
-                        x_less_degraded = x_less_degraded - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
+                            # x_s-1 = x_s - D(x_0_hat, s) + D(x_0_hat, s - 1)
+                            x_less_degraded = x_less_degraded - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
 
-                    plot_sampled_images(
-                        sampled_imgs=x_less_degraded,
-                        file_name=f"diffusion_plot_{global_steps}",
-                        dest_path=out_dir)
-            
+                        plot_sampled_images(
+                            sampled_imgs=x_less_degraded,
+                            file_name=f"diffusion_plot_{global_steps}",
+                            dest_path=out_dir)
+                
             temp_avg_diffusion = total_diffusion_loss / training_count
 
             message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
