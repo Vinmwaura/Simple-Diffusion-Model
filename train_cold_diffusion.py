@@ -62,7 +62,7 @@ def main():
         level=logging.DEBUG)
 
     # Model.
-    diffusion_net = U_Net().to(device)
+    diffusion_net = U_Net(img_dim=128, beta=beta).to(device)
 
     # Initialize gradient scaler.
     scaler = torch.cuda.amp.GradScaler()
@@ -158,14 +158,14 @@ def main():
             # Enable autocasting for mixed precision.
             with torch.cuda.amp.autocast():
                 # D(x_0, t) = x_t
-                x_degraded = noise_degradation(
+                x_noise_degraded = noise_degradation(
                     img=tr_data,
                     steps=rand_noise_step,
                     eps=noise)
-                
+
                 # R(x_t, t) = x_0
                 x_restoration = diffusion_net(
-                    x_degraded,
+                    x_noise_degraded,
                     rand_noise_step)
                 
                 # min || R(D(x,t), t) - x ||
@@ -230,7 +230,7 @@ def main():
                     with torch.no_grad():
                         noise = torch.randn((25, 3, 128, 128), device=device)
                         x_less_degraded = 1 * noise
-                        
+
                         for noise_step in range(max_noise_step, min_noise_step - 1, -1):
                             time_step = torch.tensor([noise_step], device=device)
                             

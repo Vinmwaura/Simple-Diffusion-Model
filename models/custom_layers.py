@@ -140,28 +140,6 @@ class ConvBlock(nn.Module):
 
 
 """
-Conv. Block toRGB.
-"""
-class ConvBlock_toRGB(nn.Module):
-    def __init__(self, in_channel):
-        super().__init__()
-
-        self.conv_layer = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channel,
-                out_channels=3,
-                kernel_size=3,
-                stride=1,
-                padding=1),
-            nn.Tanh()
-        )
-
-    def forward(self, in_data):
-        out = self.conv_layer(in_data)
-        return out
-
-
-"""
 Residual Conv. Block.
 """
 class UNetResidualBlock(nn.Module):
@@ -208,31 +186,46 @@ class UNetResidualBlock(nn.Module):
 
 
 """
-U-Net MiddleBlock.
+U-Net Block.
 """
-class MiddleBlock(nn.Module):
+class UNetBlock(nn.Module):
     def __init__(
             self,
-            channels,
-            time_channel):
+            in_channels,
+            hidden_channels,
+            out_channels,
+            time_channel,
+            use_attn=True,
+            middle_block=False):
+        
         super().__init__()
 
+        self.use_attn = use_attn
+        self.middle_block = middle_block
+
+        if self.use_attn:
+            self.attn = AttentionBlock(hidden_channels if self.middle_block else out_channels)
+        else:
+            self.attn = nn.Identity()
+
+        
         self.res_blk_1 = UNetResidualBlock(
-            in_channels=channels,
-            hidden_channels=channels,
-            out_channels=channels,
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=hidden_channels if self.middle_block else out_channels,
             time_channel=time_channel)
-        
-        self.res_blk_2 = UNetResidualBlock(
-            in_channels=channels,
-            hidden_channels=channels,
-            out_channels=channels,
-            time_channel=time_channel)
-        
-        self.attn = AttentionBlock(channels)
-        
+        if self.middle_block:
+            self.res_blk_2 = UNetResidualBlock(
+                in_channels=hidden_channels,
+                hidden_channels=hidden_channels,
+                out_channels=out_channels,
+                time_channel=time_channel)
+        else:
+            self.res_blk_2 = nn.Identity()
+
     def forward(self, x, t):
         x = self.res_blk_1(x, t)
         x = self.attn(x)
-        x = self.res_blk_2(x, t)
+        if self.middle_block:
+            x = self.res_blk_2(x, t)
         return x
