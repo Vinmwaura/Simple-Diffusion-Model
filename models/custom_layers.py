@@ -1,7 +1,15 @@
 import math
 
+from enum import Enum
+
 import torch
 import torch.nn as nn
+
+
+class UNetBlockType(Enum):
+    UP = 0
+    MIDDLE = 1
+    DOWN = 2
 
 
 """
@@ -107,7 +115,6 @@ class AttentionBlock(nn.Module):
         return res
 
 
-# Simpler Layers.
 """
 Conv. Block.
 """
@@ -140,25 +147,70 @@ class ConvBlock(nn.Module):
 
 
 """
+Upsample using ConvTranspose2d.
+"""
+class UpsampleBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv_layer = nn.Sequential(
+            Swish(),
+            nn.ConvTranspose2d(
+                in_channels,
+                out_channels,
+                kernel_size=4,
+                stride=2,
+                padding=1)
+        )
+
+    def forward(self, x, t):
+        _ = t
+        out = self.conv_layer(x)
+        return out
+
+
+"""
+Downsample using Conv2d.
+"""
+class DownsampleBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        
+        self.conv_layer = nn.Sequential(
+            Swish(),
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1)
+        )
+
+    def forward(self, x, t):
+        _ = t
+        out = self.conv_layer(x)
+        return out
+
+
+"""
 Residual Conv. Block.
 """
-class UNetResidualBlock(nn.Module):
+class ResidualBlock(nn.Module):
     def __init__(
             self,
             in_channels,
-            hidden_channels,
             out_channels,
             time_channel,
             use_group_norm=True):
+        
         super().__init__()
 
         self.conv_block_1 = ConvBlock(
             in_channels,
-            hidden_channels,
+            out_channels,
             use_group_norm=use_group_norm)
         
         self.conv_block_2 = ConvBlock(
-            hidden_channels,
+            out_channels,
             out_channels,
             use_group_norm=True)
 
@@ -170,7 +222,7 @@ class UNetResidualBlock(nn.Module):
         else:
             self.shortcut = nn.Identity()
         
-        self.time_emb = nn.Linear(time_channel, hidden_channels)
+        self.time_emb = nn.Linear(time_channel, out_channels)
     
     def forward(self, x, t):
         init_x = x
@@ -192,40 +244,45 @@ class UNetBlock(nn.Module):
     def __init__(
             self,
             in_channels,
-            hidden_channels,
             out_channels,
             time_channel,
             use_attn=True,
-            middle_block=False):
-        
+            block_type=UNetBlockType.MIDDLE, # up, middle, down
+        ):
+
         super().__init__()
 
+        hidden_channels = in_channels
+
         self.use_attn = use_attn
-        self.middle_block = middle_block
+        self.block_type = block_type
 
         if self.use_attn:
-            self.attn = AttentionBlock(hidden_channels if self.middle_block else out_channels)
+            self.attn_layer = AttentionBlock(hidden_channels)
         else:
-            self.attn = nn.Identity()
+            self.attn_layer = nn.Identity()
 
-        
-        self.res_blk_1 = UNetResidualBlock(
+        self.in_layer = ResidualBlock(
             in_channels=in_channels,
-            hidden_channels=hidden_channels,
-            out_channels=hidden_channels if self.middle_block else out_channels,
+            out_channels=hidden_channels,
             time_channel=time_channel)
-        if self.middle_block:
-            self.res_blk_2 = UNetResidualBlock(
+        
+        if self.block_type == UNetBlockType.DOWN:
+            self.out_layer = DownsampleBlock(
                 in_channels=hidden_channels,
-                hidden_channels=hidden_channels,
+                out_channels=out_channels)
+        elif self.block_type == UNetBlockType.MIDDLE:
+            self.out_layer = ResidualBlock(
+                in_channels=hidden_channels,
                 out_channels=out_channels,
                 time_channel=time_channel)
-        else:
-            self.res_blk_2 = nn.Identity()
+        elif self.block_type == UNetBlockType.UP:
+            self.out_layer = UpsampleBlock(
+                in_channels=hidden_channels,
+                out_channels=out_channels)
 
     def forward(self, x, t):
-        x = self.res_blk_1(x, t)
-        x = self.attn(x)
-        if self.middle_block:
-            x = self.res_blk_2(x, t)
+        x = self.in_layer(x, t)
+        x = self.attn_layer(x)
+        x = self.out_layer(x, t)
         return x

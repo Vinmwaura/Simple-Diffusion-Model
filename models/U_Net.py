@@ -11,10 +11,8 @@ from .custom_layers import *
 Simpler U-Net Architecture.
 """
 class U_Net(nn.Module):
-    def __init__(self, img_dim=64, beta=0.0005):
+    def __init__(self, img_dim=64):
         super().__init__()
-
-        self.beta = beta
 
         self.min_dim = 4
         self.max_dim = 1024
@@ -54,10 +52,10 @@ class U_Net(nn.Module):
             self.down_layers.append(
                 UNetBlock(
                     in_channels=current_channel,
-                    hidden_channels=current_channel,
                     out_channels=self.max_channel if current_channel * 2 > self.max_channel else current_channel * 2,
                     time_channel=self.min_channel,
-                    use_attn=current_dim <= 16))
+                    use_attn=current_dim <= 16,
+                    block_type=UNetBlockType.DOWN))
 
             prev_channel_list.append(current_channel)
 
@@ -70,11 +68,10 @@ class U_Net(nn.Module):
         # 4 -> 4.
         self.middle_layer = UNetBlock(
             in_channels=current_channel,
-            hidden_channels=current_channel,
             out_channels=current_channel,
             time_channel=self.min_channel,
             use_attn=True,
-            middle_block=True)
+            block_type=UNetBlockType.MIDDLE)
 
         # Up Section.
         index = 0
@@ -85,15 +82,14 @@ class U_Net(nn.Module):
             self.up_layers.append(
                 UNetBlock(
                     in_channels=prev_channel_list[index] * 2,
-                    hidden_channels=prev_channel_list[index],
                     out_channels=prev_channel_list[index + 1],
                     time_channel=self.min_channel,
-                    use_attn=current_dim <= 16),
+                    use_attn=current_dim <= 16,
+                    block_type=UNetBlockType.UP),
             )
             index += 1
             current_dim *= 2
-        
-        # self.out_layers = ConvBlock_final(prev_channel_list[index])
+
         self.out_layers = nn.Sequential(
             ConvBlock(
                 in_channels=prev_channel_list[index],
@@ -111,8 +107,6 @@ class U_Net(nn.Module):
     def forward(self, x, t=0):
         prev_out = []
 
-        init_x = x
-
         # Init Layer
         x = self.init_layer(x)
 
@@ -123,29 +117,16 @@ class U_Net(nn.Module):
         for down_layer in self.down_layers:
             x = down_layer(x, t_emb)
             prev_out.append(x)
-            x = F.max_pool2d(x, kernel_size=2)
-        
+
         # Middle Section.
         x = self.middle_layer(x, t_emb)
         
         # Up Section.
         for up_layer in self.up_layers:
-            x = F.interpolate(x, scale_factor=2)
             prev_in = prev_out.pop()
             x = torch.cat((x, prev_in), dim=1)
             x = up_layer(x, t_emb)
 
-        x = self.out_layers(x)
-    
-        # Implicitly predict noise added to image and 
-        # use computed noise to predict x_0.
-        # From improved DDPM paper.
-        alpha = 1 - self.beta
-        alpha_bar = alpha ** t
-        alpha_bar = alpha_bar[:, None, None, None]
-        scale = 1 / math.sqrt(alpha)
-        weighted_noise_approx = (self.beta / torch.sqrt(1 - alpha_bar)) * x
-        x = scale * (init_x - weighted_noise_approx)
-
-        return x
-
+        # Approximate noise added to image.
+        eps_approx = self.out_layers(x)
+        return eps_approx

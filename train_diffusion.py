@@ -5,6 +5,8 @@ import glob
 import random
 import logging
 
+from enum import Enum
+
 import torch
 torch.manual_seed(69)
 
@@ -24,17 +26,24 @@ from utils import *
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+
+# Diffusion Algorithms
+class DiffusionAlg(Enum):
+    DDPM = 0
+
+
 def main():
-    project_name = "cold_diffusion_noise"
+    project_name = "diffusion"
 
     # Training Params.
+    img_dim = 128
     starting_epoch = 0
     global_steps = 0
     checkpoint_steps = 1000  # Global steps in between checkpoints
     lr_steps = 100_000  # Global steps in between halving learning rate.
     max_epoch = 1000
-    dataset_path = ""
-    out_dir = ""
+    dataset_path = None
+    out_dir = None
 
     diffusion_checkpoint = None
     config_checkpoint = None
@@ -44,9 +53,11 @@ def main():
     batch_size = 16
     
     # Diffusion Params.
-    beta = 0.005
-    min_noise_step = 1
-    max_noise_step = 1000
+    beta_1 = 1e-4
+    beta_T = 0.02
+    min_noise_step = 1  # t_1
+    max_noise_step = 1000  # T
+    diffusion_alg = DiffusionAlg.DDPM
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -62,7 +73,7 @@ def main():
         level=logging.DEBUG)
 
     # Model.
-    diffusion_net = U_Net(img_dim=128, beta=beta).to(device)
+    diffusion_net = U_Net(img_dim=img_dim).to(device)
 
     # Initialize gradient scaler.
     scaler = torch.cuda.amp.GradScaler()
@@ -92,7 +103,8 @@ def main():
         config_status, config_dict = load_checkpoint(config_checkpoint)
         assert config_status
 
-        beta = config_dict["beta"]
+        beta_1 = config_dict["beta_1"]
+        beta_T = config_dict["beta_T"]
         min_noise_step = config_dict["min_noise_step"]
         max_noise_step = config_dict["max_noise_step"]
         starting_epoch = config_dict["starting_epoch"]
@@ -118,13 +130,18 @@ def main():
     logging.info(f"Batch size: {batch_size:,}")
     logging.info("#" * 100)
     logging.info(f"Diffusion Parameters:")
-    logging.info(f"Diffusion Beta: {beta:,.5f}")
+    logging.info(f"beta_1: {beta_1:,.5f}")
+    logging.info(f"beta_T: {beta_T:,.5f}")
     logging.info(f"Min Noise Step: {min_noise_step:,}")
     logging.info(f"Max Noise Step: {max_noise_step:,}")
     logging.info("#" * 100)
 
-    # x_t = D(x_0 | t).
-    noise_degradation = NoiseDegradation(beta)
+    # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+    noise_degradation = NoiseDegradation(
+        beta_1,
+        beta_T,
+        max_noise_step,
+        device)
     
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
@@ -135,6 +152,7 @@ def main():
 
         for index, tr_data in enumerate(dataloader):
             training_count += 1
+            
             tr_data = tr_data.to(device)
 
             #################################################
@@ -157,24 +175,27 @@ def main():
 
             # Enable autocasting for mixed precision.
             with torch.cuda.amp.autocast():
-                # D(x_0, t) = x_t
-                x_noise_degraded = noise_degradation(
+                # Noise degraded image (x_t).
+                # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+                x_t = noise_degradation(
                     img=tr_data,
                     steps=rand_noise_step,
                     eps=noise)
-
-                # R(x_t, t) = x_0
-                x_restoration = diffusion_net(
-                    x_noise_degraded,
+        
+                # Predicts noise from x_t.
+                # eps_param(sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps, t). 
+                noise_approx = diffusion_net(
+                    x_t,
                     rand_noise_step)
                 
-                # min || R(D(x,t), t) - x ||
-                restoration_loss = F.l1_loss(
-                    x_restoration,
-                    tr_data)
+                # Simplified Training Objective.
+                # L_simple(param) = E[||eps - eps_param(sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps, t).||^2]
+                diffusion_loss = F.mse_loss(
+                    noise_approx,
+                    noise)
                 
             # Scale the loss and do backprop.
-            scaler.scale(restoration_loss).backward()
+            scaler.scale(diffusion_loss).backward()
             
             # Update the scaled parameters.
             scaler.step(diffusion_optim)
@@ -182,7 +203,7 @@ def main():
             # Update the scaler for next iteration
             scaler.update()
             
-            total_diffusion_loss += restoration_loss.item()
+            total_diffusion_loss += diffusion_loss.item()
 
             if global_steps % lr_steps == 0 and global_steps > 0:
                 # Update Diffusion LR.
@@ -192,7 +213,8 @@ def main():
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
                 config_state = {
-                    "beta": beta,
+                    "beta_1": beta_1,
+                    "beta_T": beta_T,
                     "min_noise_step": min_noise_step,
                     "max_noise_step": max_noise_step,
                     "starting_epoch": starting_epoch,
@@ -218,44 +240,47 @@ def main():
                     checkpoint=True,
                     steps=global_steps)
                 
-                # Plot Sample Images.
-                """
-                Generation using deterministic noise degradation. Noise pattern is selected and
-                frozen at the start of the generation process, and then treated as a constant.
-                """
-                if global_steps > 0:
-                    # Evaluate model.
-                    diffusion_net.eval()
+                # Sample Images and plot.
+                # Evaluate model.
+                diffusion_net.eval()
 
-                    with torch.no_grad():
-                        noise = torch.randn((25, 3, 128, 128), device=device)
-                        x_less_degraded = 1 * noise
+                # X_T ~ N(0, I)
+                x_t = torch.randn((25, 3, 128, 128), device=device)
 
+                with torch.no_grad():
+                    if diffusion_alg == DiffusionAlg.DDPM:
                         for noise_step in range(max_noise_step, min_noise_step - 1, -1):
-                            time_step = torch.tensor([noise_step], device=device)
-                            
-                            # R(x_s, s) = x_hat_0
-                            x_restoration_hat = diffusion_net(
-                                x_less_degraded,
-                                time_step)
+                            # t: Time Step
+                            t = torch.tensor([noise_step], device=device)
 
-                            # D(x_hat_0, s) = x_s
-                            x_degraded_current_noise_lvl = noise_degradation(
-                                img=x_restoration_hat,
-                                steps=time_step,
-                                eps=noise)
+                            # Variables needed in computing x_(t-1).
+                            beta_t, alpha_t, alpha_bar_t = noise_degradation.get_timestep_params(t)
                             
-                            # D(x_hat_0, s-1) = x_s-1
-                            x_degraded_next_noise_lvl = noise_degradation(
-                                img=x_restoration_hat,
-                                steps=time_step - 1,
-                                eps=noise)
+                            # eps_param(x_t, t).
+                            noise_approx = diffusion_net(
+                                x_t,
+                                t)
 
-                            # x_s-1 = x_s - D(x_0_hat, s) + D(x_0_hat, s - 1)
-                            x_less_degraded = x_less_degraded - x_degraded_current_noise_lvl + x_degraded_next_noise_lvl
+                            # z ~ N(0, I) if t > 1, else z = 0.
+                            if noise_step > 1:
+                                z = torch.randn((25, 3, 128, 128), device=device)
+                            else:
+                                z = 0
+                            
+                            # sigma_t ^ 2 = beta_t = beta_hat = (1 - alpha_bar_(t-1)) / (1 - alpha_bar_t) * beta_t
+                            sigma_t = beta_t ** 0.5
+
+                            # x_(t-1) = (1 / sqrt(alpha_t)) * (x_t - (1 - alpha_t / sqrt(1 - alpha_bar_t)) * eps_param(x_t, t)) + sigma_t * z
+                            scale_1 = 1 / (alpha_t ** 0.5)
+                            scale_2 = (1 - alpha_t) / ((1 - alpha_bar_t)**0.5)
+                            
+                            # x_(t-1).
+                            x_less_degraded = scale_1 * (x_t - (scale_2 * noise_approx)) + (sigma_t * z)
+                            
+                            x_t = x_less_degraded
 
                         plot_sampled_images(
-                            sampled_imgs=x_less_degraded,
+                            sampled_imgs=x_less_degraded,  # x_0
                             file_name=f"diffusion_plot_{global_steps}",
                             dest_path=out_dir)
                 
@@ -274,7 +299,8 @@ def main():
 
         # Checkpoint and Plot Images.
         config_state = {
-            "beta": beta,
+            "beta_1": beta_1,
+            "beta_T": beta_T,
             "min_noise_step": min_noise_step,
             "max_noise_step": max_noise_step,
             "starting_epoch": starting_epoch,
