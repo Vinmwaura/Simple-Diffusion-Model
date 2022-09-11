@@ -5,8 +5,6 @@ import glob
 import random
 import logging
 
-from enum import Enum
-
 import torch
 torch.manual_seed(69)
 
@@ -24,12 +22,9 @@ from degraders import *
 
 from utils import *
 
+from diffusion_alg import *
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
-# Diffusion Algorithms
-class DiffusionAlg(Enum):
-    DDPM = 0
 
 
 def main():
@@ -53,8 +48,8 @@ def main():
     batch_size = 16
     
     # Diffusion Params.
-    beta_1 = 1e-4
-    beta_T = 0.02
+    beta_1 = 5e-3
+    beta_T = 9e-3
     min_noise_step = 1  # t_1
     max_noise_step = 1000  # T
     diffusion_alg = DiffusionAlg.DDPM
