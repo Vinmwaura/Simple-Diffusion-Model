@@ -5,3 +5,9 @@ from enum import Enum
 class DiffusionAlg(Enum):
     DDPM = 0
 
+
+# Noise Schedulers
+class NoiseScheduler(Enum):
+    LINEAR = 0
+    COSINE = 1
+

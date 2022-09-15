@@ -22,7 +22,7 @@ from degraders import *
 
 from utils import *
 
-from diffusion_alg import *
+from diffusion_enums import *
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -48,8 +48,11 @@ def main():
     batch_size = 16
     
     # Diffusion Params.
-    beta_1 = 5e-3
-    beta_T = 9e-3
+    # Linear, Cosine Schedulers
+    noise_scheduling = NoiseScheduler.COSINE
+    if noise_scheduling == NoiseScheduler.LINEAR:
+        beta_1 = 5e-3
+        beta_T = 9e-3
     min_noise_step = 1  # t_1
     max_noise_step = 1000  # T
     diffusion_alg = DiffusionAlg.DDPM
@@ -98,8 +101,9 @@ def main():
         config_status, config_dict = load_checkpoint(config_checkpoint)
         assert config_status
 
-        beta_1 = config_dict["beta_1"]
-        beta_T = config_dict["beta_T"]
+        if noise_scheduling == NoiseScheduler.LINEAR:
+            beta_1 = config_dict["beta_1"]
+            beta_T = config_dict["beta_T"]
         min_noise_step = config_dict["min_noise_step"]
         max_noise_step = config_dict["max_noise_step"]
         starting_epoch = config_dict["starting_epoch"]
@@ -125,18 +129,22 @@ def main():
     logging.info(f"Batch size: {batch_size:,}")
     logging.info("#" * 100)
     logging.info(f"Diffusion Parameters:")
-    logging.info(f"beta_1: {beta_1:,.5f}")
-    logging.info(f"beta_T: {beta_T:,.5f}")
+    if noise_scheduling == NoiseScheduler.LINEAR:
+        logging.info(f"beta_1: {beta_1:,.5f}")
+        logging.info(f"beta_T: {beta_T:,.5f}")
     logging.info(f"Min Noise Step: {min_noise_step:,}")
     logging.info(f"Max Noise Step: {max_noise_step:,}")
     logging.info("#" * 100)
 
     # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-    noise_degradation = NoiseDegradation(
-        beta_1,
-        beta_T,
-        max_noise_step,
-        device)
+    if noise_scheduling == NoiseScheduler.LINEAR:        
+        noise_degradation = NoiseDegradation(
+            beta_1,
+            beta_T,
+            max_noise_step,
+            device)
+    elif noise_scheduling == NoiseScheduler.COSINE:
+        noise_degradation = CosineNoiseDegradation(max_noise_step)
     
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
@@ -208,13 +216,15 @@ def main():
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
                 config_state = {
-                    "beta_1": beta_1,
-                    "beta_T": beta_T,
                     "min_noise_step": min_noise_step,
                     "max_noise_step": max_noise_step,
                     "starting_epoch": starting_epoch,
                     "global_steps": global_steps}
-
+                
+                if noise_scheduling == NoiseScheduler.LINEAR:
+                    config_state["beta_1"] = beta_1
+                    config_state["beta_T"] = beta_T
+                
                 # Save Config Net.
                 save_model(
                     model_net=config_state,
@@ -294,13 +304,14 @@ def main():
 
         # Checkpoint and Plot Images.
         config_state = {
-            "beta_1": beta_1,
-            "beta_T": beta_T,
             "min_noise_step": min_noise_step,
             "max_noise_step": max_noise_step,
             "starting_epoch": starting_epoch,
             "global_steps": global_steps
         }
+        if noise_scheduling == NoiseScheduler.LINEAR:
+            config_state["beta_1"] = beta_1
+            config_state["beta_T"] = beta_T
 
         # Save Config Net.
         save_model(
