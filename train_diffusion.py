@@ -31,7 +31,6 @@ def main():
     project_name = "diffusion"
 
     # Training Params.
-    img_dim = 128
     starting_epoch = 0
     global_steps = 0
     checkpoint_steps = 1000  # Global steps in between checkpoints
@@ -49,7 +48,7 @@ def main():
     
     # Diffusion Params.
     # Linear, Cosine Schedulers
-    noise_scheduling = NoiseScheduler.COSINE
+    noise_scheduling = NoiseScheduler.LINEAR
     if noise_scheduling == NoiseScheduler.LINEAR:
         beta_1 = 5e-3
         beta_T = 9e-3
@@ -71,7 +70,7 @@ def main():
         level=logging.DEBUG)
 
     # Model.
-    diffusion_net = U_Net(img_dim=img_dim).to(device)
+    diffusion_net = U_Net().to(device)
 
     # Initialize gradient scaler.
     scaler = torch.cuda.amp.GradScaler()
