@@ -13,6 +13,8 @@ U-Net Architecture.
 class U_Net(nn.Module):
     def __init__(
             self,
+            in_channel=3,
+            out_channel=3,
             num_layers=5,
             attn_layers=[3, 4],
             time_channel=64,
@@ -47,7 +49,7 @@ class U_Net(nn.Module):
         # Images to featch maps.
         self.init_layer = nn.Sequential(
             nn.Conv2d(
-                in_channels=3,
+                in_channels=in_channel,
                 out_channels=channel_layers[0],
                 kernel_size=3,
                 stride=1,
@@ -104,7 +106,7 @@ class U_Net(nn.Module):
             Swish(),
             nn.Conv2d(
                 in_channels=channel_layers[0],
-                out_channels=3,
+                out_channels=out_channel,
                 kernel_size=3,
                 stride=1,
                 padding=1),

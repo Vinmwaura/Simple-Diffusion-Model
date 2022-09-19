@@ -28,7 +28,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 def main():
-    project_name = "diffusion"
+    project_name = "Diffusion"
 
     # Training Params.
     starting_epoch = 0
@@ -36,6 +36,7 @@ def main():
     checkpoint_steps = 1000  # Global steps in between checkpoints
     lr_steps = 100_000  # Global steps in between halving learning rate.
     max_epoch = 1000
+    plot_img_count = 25
     dataset_path = None
     out_dir = None
 
@@ -49,6 +50,7 @@ def main():
     # Diffusion Params.
     # Linear, Cosine Schedulers
     noise_scheduling = NoiseScheduler.LINEAR
+    
     if noise_scheduling == NoiseScheduler.LINEAR:
         beta_1 = 5e-3
         beta_T = 9e-3
@@ -156,6 +158,7 @@ def main():
             training_count += 1
             
             tr_data = tr_data.to(device)
+            N, C, H, W = tr_data.shape
 
             #################################################
             #             Diffusion Training.               #
@@ -166,7 +169,7 @@ def main():
             rand_noise_step = torch.randint(
                 low=min_noise_step,
                 high=max_noise_step,
-                size=(len(tr_data), ),
+                size=(N, ),
                 device=device)
             
             # eps Noise.
@@ -249,7 +252,7 @@ def main():
                 diffusion_net.eval()
 
                 # X_T ~ N(0, I)
-                x_t = torch.randn((25, 3, 128, 128), device=device)
+                x_t = torch.randn((plot_img_count, C, H, W), device=device)
 
                 with torch.no_grad():
                     if diffusion_alg == DiffusionAlg.DDPM:
@@ -267,7 +270,7 @@ def main():
 
                             # z ~ N(0, I) if t > 1, else z = 0.
                             if noise_step > 1:
-                                z = torch.randn((25, 3, 128, 128), device=device)
+                                z = torch.randn((plot_img_count, C, H, W), device=device)
                             else:
                                 z = 0
                             
@@ -282,6 +285,13 @@ def main():
                             x_less_degraded = scale_1 * (x_t - (scale_2 * noise_approx)) + (sigma_t * z)
                             
                             x_t = x_less_degraded
+
+                            printProgressBar(
+                                max_noise_step - noise_step,
+                                max_noise_step,
+                                prefix = 'Iterations:',
+                                suffix = 'Complete',
+                                length = 50)
 
                         plot_sampled_images(
                             sampled_imgs=x_less_degraded,  # x_0
