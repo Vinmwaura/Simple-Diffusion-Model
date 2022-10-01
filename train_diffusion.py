@@ -49,14 +49,14 @@ def main():
     
     # Diffusion Params.
     # Linear, Cosine Schedulers
-    noise_scheduling = NoiseScheduler.LINEAR
+    noise_scheduling = NoiseScheduler.COSINE
     
     if noise_scheduling == NoiseScheduler.LINEAR:
         beta_1 = 5e-3
         beta_T = 9e-3
     min_noise_step = 1  # t_1
     max_noise_step = 1000  # T
-    diffusion_alg = DiffusionAlg.DDPM
+    diffusion_alg = DiffusionAlg.DDIM
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -235,11 +235,10 @@ def main():
                     checkpoint=True,
                     steps=global_steps)
 
+                # Save Diffusion Net.
                 diffusion_state = {
                     "model": diffusion_net.state_dict(),
                     "optimizer": diffusion_optim.state_dict(),}
-
-                # Save Diffusion Net.
                 save_model(
                     model_net=diffusion_state,
                     file_name="diffusion",
@@ -248,8 +247,7 @@ def main():
                     steps=global_steps)
                 
                 # Sample Images and plot.
-                # Evaluate model.
-                diffusion_net.eval()
+                diffusion_net.eval()  # Evaluate model.
 
                 # X_T ~ N(0, I)
                 x_t = torch.randn((plot_img_count, C, H, W), device=device)
@@ -297,7 +295,50 @@ def main():
                             sampled_imgs=x_less_degraded,  # x_0
                             file_name=f"diffusion_plot_{global_steps}",
                             dest_path=out_dir)
-                
+                    elif diffusion_alg == DiffusionAlg.DDIM:
+                        for noise_step in range(max_noise_step, 20, -20):
+                            # t: Time Step
+                            t = torch.tensor([noise_step], device=device)
+
+                            # Variables needed in computing x_t.
+                            beta_t, _, alpha_bar_t = noise_degradation.get_timestep_params(t)
+
+                           # Variables needed in computing x_(t-1).
+                            _, _, alpha_bar_tm1 = noise_degradation.get_timestep_params(t - 20)
+                            
+                            # eps_theta(x_t, t).
+                            noise_approx = diffusion_net(
+                                x_t,
+                                t)
+                            
+                            # Predict x0 using eps_theta(Approximated noise) and x_t.
+                            scale = 1 / (alpha_bar_t)**0.5
+                            x0_approx = scale * (x_t - ((1 - alpha_bar_t)**0.5 * noise_approx))
+
+                            # Assumption: sigma_squared = beta.
+                            sigma_sq = (1 - alpha_bar_tm1) / (1 - alpha_bar_t) * beta_t
+                            eps = torch.randn_like(x0_approx)
+
+                            # As implemented in "Denoising Diffusion Implicit Models" paper.
+                            # x0_predicted = (1/sqrt(alpha_bar_t) * x_t - sqrt(1 - alpha_bar_t)) * eps_theta
+                            # xt_direction = sqrt(1 - alpha_bar_t-1 - sigma_squared * eps_theta)
+                            # random_noise = sqrt(sigma_squared) * eps
+                            # x_(t-1) = sqrt(alpha_bar_t-1) * x0_predicted + xt_direction + random_noise
+                            x_t = ((alpha_bar_tm1)**0.5 * x0_approx) + ((1 - alpha_bar_tm1 - sigma_sq)**0.5 * noise_approx) + ((sigma_sq)**0.5 * eps)
+
+                            printProgressBar(
+                                max_noise_step - noise_step,
+                                max_noise_step,
+                                prefix = 'Iterations:',
+                                suffix = 'Complete',
+                                length = 50)
+                        
+                            x_0 = x_t
+                        plot_sampled_images(
+                            sampled_imgs=x_0,  # x_0
+                            file_name=f"diffusion_plot_{global_steps}",
+                            dest_path=out_dir)
+
             temp_avg_diffusion = total_diffusion_loss / training_count
 
             message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
