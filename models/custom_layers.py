@@ -4,6 +4,7 @@ from enum import Enum
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class UNetBlockType(Enum):
@@ -18,6 +19,31 @@ Swish Activation Function.
 class Swish(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x)
+
+
+"""
+Adaptive Group Normalization: (AdaGN).
+"""
+class AdaGN(nn.Module):
+    def __init__(self, time_channels, out_channels, groups=32):
+        
+        super().__init__()
+
+        self.y_scale = nn.Linear(time_channels, out_channels)
+        self.y_shift = nn.Linear(time_channels, out_channels)
+        self.group_norm = nn.GroupNorm(groups, out_channels)
+
+    def forward(self, x, t):
+        x_gn = self.group_norm(x)
+
+        y_scale = self.y_scale(t)
+        y_scale = y_scale[:, :, None, None]
+
+        y_shift = self.y_scale(t)
+        y_shift = y_shift[:, :, None, None]
+
+        x = y_scale * x_gn + y_shift
+        return x
 
 
 """
@@ -116,34 +142,53 @@ class AttentionBlock(nn.Module):
 
 
 """
+Time Embedded Conv. Block.
+"""
+class UNet_ConvBlock(nn.Module):
+    def __init__(self, time_channels, in_channels, out_channels, groups=32):
+        
+        super().__init__()
+        
+        self.conv_layer = nn.Sequential(
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                padding=1),
+            Swish())
+        self.adagn = AdaGN(time_channels, out_channels, groups=groups)
+
+    def forward(self, x, t):
+        x = self.conv_layer(x)
+        x = self.adagn(x, t)
+        return x
+
+
+"""
 Conv. Block.
 """
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, use_group_norm=False, groups=32):
+    def __init__(self, in_channels, out_channels, use_activation=True):
         super().__init__()
-        if use_group_norm:
+        if use_activation:
             self.conv_layer = nn.Sequential(
-                nn.GroupNorm(groups, in_channels),
-                Swish(),
                 nn.Conv2d(
                     in_channels,
                     out_channels,
                     kernel_size=3,
                     padding=1),
-            )
+                Swish())
         else:
             self.conv_layer = nn.Sequential(
                 nn.Conv2d(
                     in_channels,
                     out_channels,
                     kernel_size=3,
-                    padding=1),
-                Swish(),
-            )
+                    padding=1))
 
-    def forward(self, in_data):
-        out = self.conv_layer(in_data)
-        return out
+    def forward(self, x):
+        x = self.conv_layer(x)
+        return x
 
 
 """
@@ -153,19 +198,19 @@ class UpsampleBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.conv_layer = nn.Sequential(
-            Swish(),
             nn.ConvTranspose2d(
                 in_channels,
                 out_channels,
                 kernel_size=4,
                 stride=2,
-                padding=1)
-        )
+                padding=1),
+            Swish(),)
+
 
     def forward(self, x, t):
         _ = t
-        out = self.conv_layer(x)
-        return out
+        x = self.conv_layer(x)
+        return x
 
 
 """
@@ -174,21 +219,19 @@ Downsample using Conv2d.
 class DownsampleBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        
         self.conv_layer = nn.Sequential(
-            Swish(),
             nn.Conv2d(
                 in_channels,
                 out_channels,
                 kernel_size=3,
                 stride=2,
-                padding=1)
-        )
+                padding=1),
+            Swish())
 
     def forward(self, x, t):
         _ = t
-        out = self.conv_layer(x)
-        return out
+        x = self.conv_layer(x)
+        return x
 
 
 """
@@ -199,20 +242,19 @@ class ResidualBlock(nn.Module):
             self,
             in_channels,
             out_channels,
-            time_channel,
-            use_group_norm=True):
+            time_channel):
         
         super().__init__()
 
-        self.conv_block_1 = ConvBlock(
+        self.conv_block_1 = UNet_ConvBlock(
+            time_channel,
             in_channels,
-            out_channels,
-            use_group_norm=use_group_norm)
+            out_channels)
         
-        self.conv_block_2 = ConvBlock(
+        self.conv_block_2 = UNet_ConvBlock(
+            time_channel,
             out_channels,
-            out_channels,
-            use_group_norm=True)
+            out_channels)
 
         if in_channels != out_channels:
             self.shortcut = nn.Conv2d(
@@ -222,17 +264,17 @@ class ResidualBlock(nn.Module):
         else:
             self.shortcut = nn.Identity()
         
-        self.time_emb = nn.Linear(time_channel, out_channels)
+        # self.time_emb = nn.Linear(time_channel, out_channels)
     
     def forward(self, x, t):
         init_x = x
-        x = self.conv_block_1(x)
+        x = self.conv_block_1(x, t)
         
         # Time Embedding.
-        t = self.time_emb(t)[:, :, None, None]
-        x = x + t
+        # t = self.time_emb(t)[:, :, None, None]
+        # x = x + t
         
-        x = self.conv_block_2(x)
+        x = self.conv_block_2(x, t)
         x = x + self.shortcut(init_x)
         return x
 
