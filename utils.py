@@ -71,7 +71,7 @@ def load_checkpoint(checkpoint_path):
     if os.path.exists(checkpoint_path):
         print(f"Loading checkpoint: {checkpoint_path}")
         try:
-            checkpoint = torch.load(checkpoint_path)
+            checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
             return True, checkpoint
         except Exception as e:
             return False, None

@@ -16,11 +16,12 @@ class U_Net(nn.Module):
             in_channel=3,
             out_channel=3,
             num_layers=5,
-            attn_layers=[3, 4],
+            attn_layers=[2, 3, 4],
             time_channel=64,
-            min_channel=64,
+            min_channel=128,
             max_channel=512,
             image_recon=False):
+
         super().__init__()
         
         # Asserts to ensure params are valid to prevent wierd issues.
@@ -32,8 +33,8 @@ class U_Net(nn.Module):
             assert attn_layer > 0
             assert attn_layer < num_layers
         
+        self.image_recon = image_recon
         self.time_channel = time_channel
-        
         self.min_channel = min_channel
         self.max_channel = max_channel
 
@@ -47,14 +48,14 @@ class U_Net(nn.Module):
         # Time Embedding Layer.
         self.time_emb = TimeEmbedding(self.time_channel)
 
-        # Images to feature maps.
-        self.init_layer = nn.Conv2d(
-            in_channels=in_channel,
-            out_channels=channel_layers[0],
-            kernel_size=(1, 1))
-        
         # Down Section.
         self.down_layers = nn.ModuleList()
+        self.down_layers.append(
+            ConvBlock(
+                in_channels=in_channel,
+                out_channels=min_channel,
+                use_activation=False))
+
         for layer_count in range(0, num_layers, 1):
             self.down_layers.append(
                 UNetBlock(
@@ -71,7 +72,7 @@ class U_Net(nn.Module):
             in_channels=channel_layers[-1],
             out_channels=channel_layers[-1],
             time_channel=self.time_channel,
-            use_attn=not image_recon,
+            use_attn=True,
             block_type=UNetBlockType.MIDDLE)
         self.middle_layer = nn.Sequential(
             ConvBlock(
@@ -79,13 +80,12 @@ class U_Net(nn.Module):
                 out_channels=channel_layers[-1]),
             ConvBlock(
                 in_channels=channel_layers[-1],
-                out_channels=channel_layers[-1])
-        )
+                out_channels=channel_layers[-1]))
         self.middle_layer_post = UNetBlock(
             in_channels=channel_layers[-1],
             out_channels=channel_layers[-1],
             time_channel=self.time_channel,
-            use_attn=not image_recon,
+            use_attn=True,
             block_type=UNetBlockType.MIDDLE)
 
         # Up Section.
@@ -118,17 +118,15 @@ class U_Net(nn.Module):
         
         self.out_layers = nn.Sequential(*out_layers)
 
-    def forward(self, x, t=0):
+    def forward(self, x, t):
         prev_out = []
 
-        # Init Layer
-        x = self.init_layer(x)
-        
-        # Time Embedding (x + t).
+        # Time Embedding (t).
         t_emb = self.time_emb(t)
 
         # Down Section.
-        for down_layer in self.down_layers:
+        x = self.down_layers[0](x)
+        for down_layer in self.down_layers[1:]:
             x = down_layer(x, t_emb)
             prev_out.append(x)
 
@@ -143,6 +141,6 @@ class U_Net(nn.Module):
             x = torch.cat((x, prev_in), dim=1)
             x = up_layer(x, t_emb)
             
-        # Approximate noise added to image.
-        eps_approx = self.out_layers(x)
-        return eps_approx
+        # Implicitly approximate noise added to image.
+        x0_approx = self.out_layers(x)
+        return x0_approx
