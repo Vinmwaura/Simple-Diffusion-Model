@@ -141,6 +141,5 @@ class U_Net(nn.Module):
             x = torch.cat((x, prev_in), dim=1)
             x = up_layer(x, t_emb)
             
-        # Implicitly approximate noise added to image.
-        x0_approx = self.out_layers(x)
-        return x0_approx
+        x = self.out_layers(x)
+        return x
