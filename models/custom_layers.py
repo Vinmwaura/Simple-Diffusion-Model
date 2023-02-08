@@ -207,7 +207,7 @@ class UpsampleBlock(nn.Module):
             Swish(),)
 
 
-    def forward(self, x, t):
+    def forward(self, x, t=None):
         _ = t
         x = self.conv_layer(x)
         return x
@@ -228,7 +228,7 @@ class DownsampleBlock(nn.Module):
                 padding=1),
             Swish())
 
-    def forward(self, x, t):
+    def forward(self, x, t=None):
         _ = t
         x = self.conv_layer(x)
         return x
