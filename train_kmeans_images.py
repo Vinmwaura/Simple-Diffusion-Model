@@ -18,14 +18,15 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 def main():
     project_name = "K-Means-Images"
 
+    # K-Means Params.
+    K = 75
+    min_delta = 1e-8  # Determines stopping condition.
+    batch_size = 64
+    max_training_steps = 1_000
+    
     # Training Params.
     dataset_path = None
     out_dir = None
-
-    # K-Means Params.
-    K = 128
-    batch_size = 64
-    max_training_steps = 1_000
 
     assert dataset_path is not None
     assert out_dir is not None
@@ -97,7 +98,7 @@ def main():
     centroids = centroids.to(device)
 
     stopping_condition = False
-    training_count = 0
+    training_steps = 0
     prev_mqe = None
 
     while not stopping_condition:
@@ -137,18 +138,18 @@ def main():
             diff_ = None
         else:
             diff_ = prev_mqe - mqe_mean
-            if diff_ < 1e-3:
+            if diff_ < min_delta:
                 stopping_condition = True
             prev_mqe = mqe_mean
-        logging.info(f"{training_count}, {mqe_mean}, {diff_}")
-        training_count += 1
-        if training_count >= max_training_steps:
+        logging.info(f"\nTraining Step: {training_steps} / {max_training_steps} | MQE_mean: {mqe_mean} | Centroid min count: {total_data_counter.min()} | Centroid max count: {total_data_counter.max()}")
+        training_steps += 1
+        if training_steps >= max_training_steps:
             stopping_condition = True
         
         # Plot Centroids.
         plot_sampled_images(
             sampled_imgs=centroids.squeeze(1),
-            file_name=f"centroids_plot_{training_count}",
+            file_name=f"centroids_plot_{training_steps}",
             dest_path=out_dir)
         
         # Save Centroids.
@@ -159,7 +160,9 @@ def main():
             file_name="centroids",
             dest_path=out_dir,
             checkpoint=True,
-            steps=training_count)
+            steps=training_steps)
+        
+    logging.info(f"\nFinished training.")
 
 if __name__ == "__main__":
     main()
