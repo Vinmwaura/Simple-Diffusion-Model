@@ -118,6 +118,20 @@ class U_Net(nn.Module):
         
         self.out_layers = nn.Sequential(*out_layers)
 
+    def custom_load_state_dict(self, state_dict):
+        own_state = self.state_dict()
+        for name, param in state_dict.items():
+            if name not in own_state:
+                continue
+            # Skip loading mismatched weights, in cases of weight changes.
+            if (own_state[name].shape != param.data.shape):
+                print(f"Skipped: {name}")
+                continue
+            if isinstance(param, torch.nn.parameter.Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            own_state[name].copy_(param)
+
     def forward(self, x, t):
         prev_out = []
 
