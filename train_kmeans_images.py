@@ -43,7 +43,7 @@ def main():
         centroids_status, centroids_dict= load_checkpoint(centroids_checkpoint)
         assert centroids_status
 
-        centroids.load_state_dict(centroids_dict["centroids"])
+        centroids = centroids_dict["centroids"]
         centroids = centroids.to(device)
 
     log_path = os.path.join(out_dir, f"{project_name}.log")
@@ -108,7 +108,7 @@ def main():
 
         total_count = len(dataloader)
         for index, tr_data in enumerate(dataloader):
-            tr_data = tr_data.unsqueeze(0).to(device)  # (N, 1, C, H, W)
+            tr_data = tr_data.unsqueeze(0).to(device)  # (1, N, C, H, W)
 
             distance = compute_rmse(centroids, tr_data)[:, :, None, None, None]
             min_distance_index = torch.argmin(distance, dim=0).squeeze()
@@ -154,7 +154,8 @@ def main():
         
         # Save Centroids.
         centroids_state = {
-            "centroids": centroids.cpu()}
+            "centroids": centroids.cpu(),
+            "K": K}
         save_model(
             model_net=centroids_state,
             file_name="centroids",
