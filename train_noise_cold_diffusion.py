@@ -1,9 +1,5 @@
 import os
-from pickle import FALSE, NONE
-import sys
-import csv
 import glob
-import random
 import logging
 
 import torch
@@ -35,12 +31,16 @@ def main():
     # Training Params.
     starting_epoch = 0
     global_steps = 0
-    checkpoint_steps = 1000  # Global steps in between checkpoints
+    checkpoint_steps = 1_000  # Global steps in between checkpoints
     lr_steps = 100_000  # Global steps in between halving learning rate.
-    max_epoch = 1000
+    max_epoch = 1_000
     plot_img_count = 25
-    dataset_path = ""
-    out_dir = ""
+    dataset_path = None
+    out_dir = None
+
+    assert dataset_path is not None
+    assert out_dir is not None
+    os.makedirs(out_dir, exist_ok=True)
 
     # Load Pre-trained optimization configs, ignored if no checkpoint is passed.
     load_diffusion_optim = False
@@ -60,9 +60,7 @@ def main():
         beta_1 = 5e-3
         beta_T = 5e-3
     min_noise_step = 1  # t_1
-    max_noise_step = 1000  # T
-
-    os.makedirs(out_dir, exist_ok=True)
+    max_noise_step = 1_000  # T
 
     log_path = os.path.join(out_dir, f"{project_name}.log")
     logging.basicConfig(
@@ -76,7 +74,15 @@ def main():
         level=logging.DEBUG)
 
     # Model.
-    diffusion_net = U_Net(image_recon=True)
+    diffusion_net = U_Net(
+        in_channel=6,
+        out_channel=3,
+        num_layers=5,
+        attn_layers=[2, 3, 4],
+        time_channel=64,
+        min_channel=128,
+        max_channel=512,
+        image_recon=True)
 
     # Initialize gradient scaler.
     scaler = torch.cuda.amp.GradScaler()
@@ -131,6 +137,19 @@ def main():
         starting_epoch = config_dict["starting_epoch"]
         global_steps = config_dict["global_steps"]
 
+    # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+    if noise_scheduling == NoiseScheduler.LINEAR:        
+        noise_degradation = NoiseDegradation(
+            beta_1,
+            beta_T,
+            max_noise_step,
+            device)
+    elif noise_scheduling == NoiseScheduler.COSINE:
+        noise_degradation = CosineNoiseDegradation(max_noise_step)
+    
+    # Transformation Augmentations.
+    hflip_transformations = torchvision.transforms.RandomHorizontalFlip(p=0.5)
+
     logging.info("#" * 100)
     logging.info(f"Train Parameters:")
     logging.info(f"Max Epoch: {max_epoch:,}")
@@ -150,16 +169,6 @@ def main():
     logging.info(f"Max Noise Step: {max_noise_step:,}")
     logging.info("#" * 100)
 
-    # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-    if noise_scheduling == NoiseScheduler.LINEAR:        
-        noise_degradation = NoiseDegradation(
-            beta_1,
-            beta_T,
-            max_noise_step,
-            device)
-    elif noise_scheduling == NoiseScheduler.COSINE:
-        noise_degradation = CosineNoiseDegradation(max_noise_step)
-
     for epoch in range(starting_epoch, max_epoch):
         # Diffusion Loss.
         total_diffusion_loss = 0
@@ -171,7 +180,9 @@ def main():
             training_count += 1
             
             tr_data = tr_data.to(device)
-            N, C, H, W = tr_data.shape
+            hflip_data = hflip_transformations(tr_data)
+
+            N, C, H, W = hflip_data.shape
 
             #################################################
             #               Diffusion Training.             #
@@ -186,7 +197,7 @@ def main():
                 device=device)
             
             # eps Noise.
-            noise = torch.randn_like(tr_data)
+            noise = torch.randn_like(hflip_data)
     
             # Train model.
             diffusion_net.train()
@@ -196,7 +207,7 @@ def main():
                 # Noise degraded image (x_t).
                 # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
                 x_t = noise_degradation(
-                    img=tr_data,
+                    img=hflip_data,
                     steps=rand_noise_step,
                     eps=noise)
 
@@ -206,7 +217,7 @@ def main():
                 
                 diffusion_loss = F.mse_loss(
                     x0_approx_recon,
-                    tr_data)
+                    hflip_data)
                 
                 assert not torch.isnan(diffusion_loss)
 
@@ -265,7 +276,7 @@ def main():
                 x_t_plot = 1 * noise
 
                 with torch.no_grad():
-                    steps = list(range(1000, 0, -10)) + [1]
+                    steps = list(range(max_noise_step, min_noise_step - 1, -10)) + [1]
 
                     for count in range(len(steps)):
                         # t: Time Step
