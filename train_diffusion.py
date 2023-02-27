@@ -89,7 +89,15 @@ def main():
         shuffle=True)
 
     # Model.
-    diffusion_net = U_Net()
+    diffusion_net = U_Net(
+        in_channel=3,
+        out_channel=3,
+        num_layers=5,
+        attn_layers=[2, 3, 4],
+        time_channel=64,
+        min_channel=128,
+        max_channel=512,
+        image_recon=False)
 
     # Load Pre-trained optimization configs, ignored if no checkpoint is passed.
     load_diffusion_optim = False
@@ -149,9 +157,6 @@ def main():
         factor=0.5,
         patience=50_000,
         mode="min")
-    
-    # Transformation Augmentations.
-    hflip_transformations = torchvision.transforms.RandomHorizontalFlip(p=0.5)
 
     logging.info("#" * 100)
     logging.info(f"Train Parameters:")
@@ -321,7 +326,7 @@ def main():
                             file_name=f"diffusion_plot_{global_steps}",
                             dest_path=out_dir)
                     elif diffusion_alg == DiffusionAlg.DDIM:
-                        steps = list(range(1000, 0, -10)) + [1]
+                        steps = list(range(max_noise_step, min_noise_step - 1, -10)) + [1]
                         
                         # 0 - Deterministic
                         # 1 - DDPM
@@ -419,7 +424,7 @@ def main():
         avg_diffusion = total_diffusion_loss / training_count
         message = "Epoch: {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
             epoch,
-            avg_diffusion, 
+            avg_diffusion,
             diffusion_optim.param_groups[0]['lr']
         )
         logging.info(message)
