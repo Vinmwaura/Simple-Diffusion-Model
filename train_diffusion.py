@@ -31,6 +31,7 @@ def main():
     starting_epoch = 0
     global_steps = 0
     checkpoint_steps = 1_000  # Global steps in between checkpoints
+    lr_steps = 50_000  # Global steps in between halving learning rate.
     max_epoch = 1_000
     plot_img_count = 25
     dataset_path =  None
@@ -46,7 +47,7 @@ def main():
 
     # Model Params.
     diffusion_lr = 2e-5
-    batch_size = 16
+    batch_size = 8
 
     # Linear, Cosine Schedulers
     noise_scheduling = NoiseScheduler.LINEAR
@@ -148,13 +149,6 @@ def main():
     # Transformation Augmentations.
     hflip_transformations = torchvision.transforms.RandomHorizontalFlip(p=0.5)
 
-    # Reduce learning rate when loss plateous.
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        diffusion_optim,
-        factor=0.5,
-        patience=50_000,
-        mode="min")
-
     logging.info("#" * 100)
     logging.info(f"Train Parameters:")
     logging.info(f"Max Epoch: {max_epoch:,}")
@@ -205,14 +199,14 @@ def main():
             # Train model.
             diffusion_net.train()
 
-            img_transformations = hflip_transformations(tr_data)
+            hflip_data = hflip_transformations(tr_data)
 
             # Enable autocasting for mixed precision.
             with torch.cuda.amp.autocast():
                 # Noise degraded image (x_t).
                 # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
                 x_t = noise_degradation(
-                    img=img_transformations,
+                    img=hflip_data,
                     steps=rand_noise_step,
                     eps=noise)
         
@@ -239,8 +233,10 @@ def main():
             
             total_diffusion_loss += diffusion_loss.item()
 
-            # Reduce Learning rate when diffusion loss plateaus.
-            scheduler.step(diffusion_loss)
+            if global_steps % lr_steps == 0 and global_steps > 0:
+                # Update Diffusion LR.
+                for diffusion in diffusion_optim.param_groups:
+                    diffusion['lr'] = diffusion['lr'] * 0.5
 
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
@@ -277,7 +273,7 @@ def main():
                 diffusion_net.eval()  # Evaluate model.
 
                 # X_T ~ N(0, I)
-                x_t = torch.randn((plot_img_count, C, H, W), device=device)
+                x_t_plot = torch.randn((plot_img_count, C, H, W), device=device)
 
                 with torch.no_grad():
                     if diffusion_alg == DiffusionAlg.DDPM:
@@ -290,7 +286,7 @@ def main():
                             
                             # eps_param(x_t, t).
                             noise_approx = diffusion_net(
-                                x_t,
+                                x_t_plot,
                                 t)
 
                             # z ~ N(0, I) if t > 1, else z = 0.
@@ -307,9 +303,7 @@ def main():
                             scale_2 = (1 - alpha_t) / ((1 - alpha_bar_t)**0.5)
                             
                             # x_(t-1).
-                            x_less_degraded = scale_1 * (x_t - (scale_2 * noise_approx)) + (sigma_t * z)
-                            
-                            x_t = x_less_degraded
+                            x_t_plot = scale_1 * (x_t_plot - (scale_2 * noise_approx)) + (sigma_t * z)
 
                             printProgressBar(
                                 max_noise_step - noise_step,
@@ -319,9 +313,10 @@ def main():
                                 length = 50)
 
                         plot_sampled_images(
-                            sampled_imgs=x_less_degraded,  # x_0
+                            sampled_imgs=x_t_plot,  # x_0
                             file_name=f"diffusion_plot_{global_steps}",
                             dest_path=out_dir)
+
                     elif diffusion_alg == DiffusionAlg.DDIM:
                         steps = list(range(max_noise_step, min_noise_step - 1, -10)) + [1]
                         
@@ -335,7 +330,7 @@ def main():
 
                             # eps_theta(x_t, t).
                             noise_approx = diffusion_net(
-                                x_t,
+                                x_t_plot,
                                 t)
 
                             # Variables needed in computing x_t.
@@ -344,7 +339,7 @@ def main():
                             # Approximates x0 using x_t and eps_theta(x_t, t).
                             # x_t - sqrt(1 - alpha_bar_t) * eps_theta(x_t, t) / sqrt(alpha_bar_t).
                             scale = 1 / alpha_bar_t**0.5
-                            x0_approx = scale * (x_t - ((1 - alpha_bar_t)**0.5 * noise_approx))
+                            x0_approx = scale * (x_t_plot - ((1 - alpha_bar_t)**0.5 * noise_approx))
 
                             if count < len(steps) - 1:
                                 tm1 = torch.tensor([steps[count + 1]], device=device)
@@ -363,7 +358,7 @@ def main():
                                 # xt_direction = sqrt(1 - alpha_bar_tm1 - sigma^2 * eps_theta)
                                 # random_noise = sqrt(sigma_squared) * eps
                                 # x_tm1 = sqrt(alpha_bar_t-1) * x0_predicted + xt_direction + random_noise
-                                x_t = (alpha_bar_tm1**0.5 * x0_approx) + ((1 - alpha_bar_tm1 - sigma**2)**0.5 * noise_approx) + (sigma * eps)
+                                x_t_plot = (alpha_bar_tm1**0.5 * x0_approx) + ((1 - alpha_bar_tm1 - sigma**2)**0.5 * noise_approx) + (sigma * eps)
                             
                             printProgressBar(
                                 max_noise_step - steps[count],
