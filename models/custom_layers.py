@@ -186,7 +186,8 @@ class ConvBlock(nn.Module):
                     kernel_size=3,
                     padding=1))
 
-    def forward(self, x):
+    def forward(self, x, t=None):
+        _ = t
         x = self.conv_layer(x)
         return x
 
@@ -242,19 +243,25 @@ class ResidualBlock(nn.Module):
             self,
             in_channels,
             out_channels,
-            time_channel):
-        
+            time_channel=None):
         super().__init__()
 
-        self.conv_block_1 = UNet_ConvBlock(
-            time_channel,
-            in_channels,
-            out_channels)
-        
-        self.conv_block_2 = UNet_ConvBlock(
-            time_channel,
-            out_channels,
-            out_channels)
+        if time_channel is not None:
+            self.conv_block_1 = UNet_ConvBlock(
+                time_channel,
+                in_channels,
+                out_channels)
+            self.conv_block_2 = UNet_ConvBlock(
+                time_channel,
+                out_channels,
+                out_channels)
+        else:
+            self.conv_block_1 = ConvBlock(
+                in_channels,
+                out_channels)
+            self.conv_block_2 = ConvBlock(
+                out_channels,
+                out_channels)
 
         if in_channels != out_channels:
             self.shortcut = nn.Conv2d(
@@ -266,14 +273,9 @@ class ResidualBlock(nn.Module):
         
         # self.time_emb = nn.Linear(time_channel, out_channels)
     
-    def forward(self, x, t):
+    def forward(self, x, t=None):
         init_x = x
         x = self.conv_block_1(x, t)
-        
-        # Time Embedding.
-        # t = self.time_emb(t)[:, :, None, None]
-        # x = x + t
-        
         x = self.conv_block_2(x, t)
         x = x + self.shortcut(init_x)
         return x
@@ -323,7 +325,7 @@ class UNetBlock(nn.Module):
                 in_channels=hidden_channels,
                 out_channels=out_channels)
 
-    def forward(self, x, t):
+    def forward(self, x, t=None):
         x = self.in_layer(x, t)
         x = self.attn_layer(x)
         x = self.out_layer(x, t)

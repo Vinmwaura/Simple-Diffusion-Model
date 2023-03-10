@@ -46,8 +46,11 @@ class U_Net(nn.Module):
             channel_layers.append(self.max_channel if channel > self.max_channel else channel)
 
         # Time Embedding Layer.
-        self.time_emb = TimeEmbedding(self.time_channel)
-
+        if time_channel is not None:
+            self.time_emb = TimeEmbedding(self.time_channel)
+        else:
+            self.time_emb = None
+        
         # Down Section.
         self.down_layers = nn.ModuleList()
         self.down_layers.append(
@@ -132,11 +135,14 @@ class U_Net(nn.Module):
                 param = param.data
             own_state[name].copy_(param)
 
-    def forward(self, x, t):
+    def forward(self, x, t=None):
         prev_out = []
 
-        # Time Embedding (t).
-        t_emb = self.time_emb(t)
+        if self.time_emb is not None:
+            # Time Embedding (t).
+            t_emb = self.time_emb(t)
+        else:
+            t_emb = None
 
         # Down Section.
         x = self.down_layers[0](x)
