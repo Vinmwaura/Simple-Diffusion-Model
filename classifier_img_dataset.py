@@ -27,14 +27,17 @@ class ClassifierImgDataset(Dataset):
         labels_tbl = dataset_db.table("Labels")
         assert len(labels_tbl) > 0
 
-        all_labels = labels_tbl.all()[0]["labels"]
+        self.all_labels = labels_tbl.all()[0]["labels"]
         
         self.dataset = []
         for data in data_tbl.all():
             out_labels = []
-            for label in all_labels:
+            for label in self.all_labels:
                 out_labels.append(float(data[label]))
             self.dataset.append((data["filename"], out_labels))
+
+    def get_labels(self):
+        return self.all_labels
 
     def __len__(self):
         return len(self.dataset)
@@ -59,4 +62,3 @@ class ClassifierImgDataset(Dataset):
         # Permute image to be of format: [C,H,W]
         img_tensor = img_tensor.permute(2, 0, 1)
         return img_tensor, labels_tensor
-
