@@ -17,11 +17,11 @@ class U_Net(nn.Module):
             out_channel=3,
             num_layers=5,
             attn_layers=[2, 3, 4],
-            time_channel=64,
+            time_dim=64,
+            cond_dim=None,
             min_channel=128,
             max_channel=512,
             image_recon=False):
-
         super().__init__()
         
         # Asserts to ensure params are valid to prevent wierd issues.
@@ -34,7 +34,8 @@ class U_Net(nn.Module):
             assert attn_layer < num_layers
         
         self.image_recon = image_recon
-        self.time_channel = time_channel
+        self.time_dim = time_dim
+        self.cond_dim = cond_dim
         self.min_channel = min_channel
         self.max_channel = max_channel
 
@@ -43,11 +44,13 @@ class U_Net(nn.Module):
         channel = self.min_channel
         for _ in range(num_layers):
             channel = channel * 2
-            channel_layers.append(self.max_channel if channel > self.max_channel else channel)
+            channel_layers.append(
+                self.max_channel if channel > self.max_channel else channel)
 
         # Time Embedding Layer.
-        if time_channel is not None:
-            self.time_emb = TimeEmbedding(self.time_channel)
+        if time_dim is not None:
+            # Adds Conditional to Time Embedding if any (Seems to work).
+            self.time_emb = TimeEmbedding(self.time_dim, self.cond_dim)
         else:
             self.time_emb = None
         
@@ -64,7 +67,7 @@ class U_Net(nn.Module):
                 UNetBlock(
                     in_channels=channel_layers[layer_count],
                     out_channels=channel_layers[layer_count + 1],
-                    time_channel=self.time_channel,
+                    time_dim=self.time_dim,
                     use_attn=layer_count in attn_layers,
                     block_type=UNetBlockType.DOWN
                 )
@@ -74,7 +77,7 @@ class U_Net(nn.Module):
         self.middle_layer_pre = UNetBlock(
             in_channels=channel_layers[-1],
             out_channels=channel_layers[-1],
-            time_channel=self.time_channel,
+            time_dim=self.time_dim,
             use_attn=True,
             block_type=UNetBlockType.MIDDLE)
         self.middle_layer = nn.Sequential(
@@ -87,7 +90,7 @@ class U_Net(nn.Module):
         self.middle_layer_post = UNetBlock(
             in_channels=channel_layers[-1],
             out_channels=channel_layers[-1],
-            time_channel=self.time_channel,
+            time_dim=self.time_dim,
             use_attn=True,
             block_type=UNetBlockType.MIDDLE)
 
@@ -98,7 +101,7 @@ class U_Net(nn.Module):
                 UNetBlock(
                     in_channels=channel_layers[layer_count + 1] * 2,   # Doubles channels
                     out_channels=channel_layers[layer_count],
-                    time_channel=self.time_channel,
+                    time_dim=self.time_dim,
                     use_attn=layer_count in attn_layers,
                     block_type=UNetBlockType.UP
                 )
@@ -125,6 +128,7 @@ class U_Net(nn.Module):
         own_state = self.state_dict()
         for name, param in state_dict.items():
             if name not in own_state:
+                print(f"No Layer found: {name}, skipping")
                 continue
             # Skip loading mismatched weights, in cases of weight changes.
             if (own_state[name].shape != param.data.shape):
@@ -135,12 +139,12 @@ class U_Net(nn.Module):
                 param = param.data
             own_state[name].copy_(param)
 
-    def forward(self, x, t=None):
+    def forward(self, x, t=None, cond=None):
         prev_out = []
 
         if self.time_emb is not None:
             # Time Embedding (t).
-            t_emb = self.time_emb(t)
+            t_emb = self.time_emb(t, cond)
         else:
             t_emb = None
 
@@ -163,3 +167,4 @@ class U_Net(nn.Module):
             
         x = self.out_layers(x)
         return x
+

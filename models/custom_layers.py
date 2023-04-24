@@ -50,29 +50,50 @@ class AdaGN(nn.Module):
 Time Embedding (Positional Sinusodial) like in Transformers.
 """
 class TimeEmbedding(nn.Module):
-    def __init__(self, embedding_dim):
+    def __init__(self, time_dim, cond_dim=None):
         super().__init__()
 
         # Number of dimensions in the embedding.
-        self.embedding_dim = embedding_dim
+        self.time_dim = time_dim
+        self.cond_dim = cond_dim
 
         self.fc_layer = nn.Sequential(
-            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Linear(self.time_dim, self.time_dim),
             Swish(),
-            nn.Linear(self.embedding_dim, self.embedding_dim)
+            nn.Linear(self.time_dim, self.time_dim),
+            Swish(),
+            nn.Linear(self.time_dim, self.time_dim),
+            Swish(),
+            nn.Linear(self.time_dim, self.time_dim),
+            Swish(),
+            nn.Linear(self.time_dim, self.time_dim),
+            Swish(),
+            nn.Linear(self.time_dim, self.time_dim),
+            Swish(),
+            nn.Linear(self.time_dim, self.time_dim),
         )
-        
 
-    def forward(self, t):
+        if self.cond_dim is not None:
+            self.fc_layer_2 = nn.Linear(self.cond_dim, self.time_dim)
+        else:
+            self.cond_emb_layer = None
+
+    def forward(self, t, cond=None):
         # Sinusoidal Position embeddings.
-        half_dim = self.embedding_dim // 2
-        emb = math.log(10_000) / (half_dim - 1)
-        emb = torch.exp(
-            torch.arange(half_dim, dtype=torch.float32, device=t.device) * -emb
+        half_dim = self.time_dim // 2
+        time_emb = math.log(10_000) / (half_dim - 1)
+        time_emb = torch.exp(
+            torch.arange(half_dim, dtype=torch.float32, device=t.device) * -time_emb
         )
-        emb = t[:, None] * emb[None, :]
-        emb = torch.cat((emb.sin(), emb.cos()), dim=1)
-        emb = self.fc_layer(emb)
+        time_emb = t[:, None] * time_emb[None, :]
+        time_emb = torch.cat((time_emb.sin(), time_emb.cos()), dim=1)
+        
+        time_emb = self.fc_layer(time_emb)
+        
+        cond_emb = 0
+        if self.fc_layer_2 is not None:
+            cond_emb = self.fc_layer_2(cond)
+        emb = time_emb + cond_emb
         return emb
 
 
@@ -243,16 +264,16 @@ class ResidualBlock(nn.Module):
             self,
             in_channels,
             out_channels,
-            time_channel=None):
+            time_dim=None):
         super().__init__()
 
-        if time_channel is not None:
+        if time_dim is not None:
             self.conv_block_1 = UNet_ConvBlock(
-                time_channel,
+                time_dim,
                 in_channels,
                 out_channels)
             self.conv_block_2 = UNet_ConvBlock(
-                time_channel,
+                time_dim,
                 out_channels,
                 out_channels)
         else:
@@ -271,7 +292,7 @@ class ResidualBlock(nn.Module):
         else:
             self.shortcut = nn.Identity()
         
-        # self.time_emb = nn.Linear(time_channel, out_channels)
+        # self.time_emb = nn.Linear(time_dim, out_channels)
     
     def forward(self, x, t=None):
         init_x = x
@@ -289,7 +310,7 @@ class UNetBlock(nn.Module):
             self,
             in_channels,
             out_channels,
-            time_channel,
+            time_dim,
             use_attn=True,
             block_type=UNetBlockType.MIDDLE, # up, middle, down
         ):
@@ -309,7 +330,7 @@ class UNetBlock(nn.Module):
         self.in_layer = ResidualBlock(
             in_channels=in_channels,
             out_channels=hidden_channels,
-            time_channel=time_channel)
+            time_dim=time_dim)
         
         if self.block_type == UNetBlockType.DOWN:
             self.out_layer = DownsampleBlock(
@@ -319,7 +340,7 @@ class UNetBlock(nn.Module):
             self.out_layer = ResidualBlock(
                 in_channels=hidden_channels,
                 out_channels=out_channels,
-                time_channel=time_channel)
+                time_dim=time_dim)
         elif self.block_type == UNetBlockType.UP:
             self.out_layer = UpsampleBlock(
                 in_channels=hidden_channels,
