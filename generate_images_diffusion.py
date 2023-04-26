@@ -29,7 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--in_channel", help = "U Net Model In channel config. (default: 3).", default=3, type=int)
     parser.add_argument("--out_channel", help = "U Net Model Out channel config. (default: 3).", default=3, type=int)
     parser.add_argument("--num_layers", help = "U Net Model Layers used. (default: 5).", default=5, type=int)
-    parser.add_argument("--time_channel", help = "U Net time channels used. (default: 64).", default=64, type=int)
+    parser.add_argument("--time_dim", help = "U Net time channels used. (default: 64).", default=64, type=int)
     parser.add_argument("--min_channel", help = "U Net min channels used. (default: 128).", default=128, type=int)
     parser.add_argument("--max_channel", help = "U Net max channels used. (default: 512).", default=512, type=int)
     parser.add_argument("--image_recon", help = "U Net model uses tanh in last layer. (default: False).", default=False, type=bool)
@@ -71,7 +71,7 @@ if __name__ == "__main__":
             out_channel=args["out_channel"],
             num_layers=args["num_layers"],
             attn_layers=args["attn_layers"],
-            time_channel=args["time_channel"],
+            time_dim=args["time_dim"],
             min_channel=args["min_channel"],
             max_channel=args["max_channel"],
             image_recon=args["image_recon"],
