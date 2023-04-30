@@ -32,7 +32,12 @@ def plot_sampled_images(sampled_imgs, file_name, dest_path=None):
     permute = [2, 1, 0]
     sampled_imgs = sampled_imgs[:, permute]
 
-    grid_img = torchvision.utils.make_grid(sampled_imgs, nrow=5)
+
+    grid_img = torchvision.utils.make_grid(
+        sampled_imgs,
+        nrow=5,
+        normalize=True,
+        value_range=(-1, 1))
 
     if dest_path is None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
