@@ -76,7 +76,7 @@ class TimeEmbedding(nn.Module):
         if self.cond_dim is not None:
             self.fc_layer_2 = nn.Linear(self.cond_dim, self.time_dim)
         else:
-            self.cond_emb_layer = None
+            self.fc_layer_2 = None
 
     def forward(self, t, cond=None):
         # Sinusoidal Position embeddings.
