@@ -9,8 +9,7 @@ import torch.nn.functional as F
 
 class UNetBlockType(Enum):
     UP = 0
-    MIDDLE = 1
-    DOWN = 2
+    DOWN = 1
 
 
 """
@@ -25,21 +24,21 @@ class Swish(nn.Module):
 Adaptive Group Normalization: (AdaGN).
 """
 class AdaGN(nn.Module):
-    def __init__(self, time_channels, out_channels, groups=32):
-        
+    def __init__(self, emb_dim, out_dim, groups=32):
         super().__init__()
 
-        self.y_scale = nn.Linear(time_channels, out_channels)
-        self.y_shift = nn.Linear(time_channels, out_channels)
-        self.group_norm = nn.GroupNorm(groups, out_channels)
+        self.y_scale = nn.Linear(emb_dim, out_dim)
+        self.y_shift = nn.Linear(emb_dim, out_dim)
 
-    def forward(self, x, t):
+        self.group_norm = nn.GroupNorm(groups, out_dim)
+
+    def forward(self, x, emb):
         x_gn = self.group_norm(x)
-
-        y_scale = self.y_scale(t)
+        
+        y_scale = self.y_scale(emb)
         y_scale = y_scale[:, :, None, None]
 
-        y_shift = self.y_scale(t)
+        y_shift = self.y_scale(emb)
         y_shift = y_shift[:, :, None, None]
 
         x = y_scale * x_gn + y_shift
@@ -47,9 +46,9 @@ class AdaGN(nn.Module):
 
 
 """
-Time Embedding (Positional Sinusodial) like in Transformers.
+Time Embedding (Positional Sinusodial) + Conditional Info e.g one-hot encoding.
 """
-class TimeEmbedding(nn.Module):
+class ConditionalEmbedding(nn.Module):
     def __init__(self, time_dim, cond_dim=None):
         super().__init__()
 
@@ -57,13 +56,7 @@ class TimeEmbedding(nn.Module):
         self.time_dim = time_dim
         self.cond_dim = cond_dim
 
-        self.fc_layer = nn.Sequential(
-            nn.Linear(self.time_dim, self.time_dim),
-            Swish(),
-            nn.Linear(self.time_dim, self.time_dim),
-            Swish(),
-            nn.Linear(self.time_dim, self.time_dim),
-            Swish(),
+        self.time_layer = nn.Sequential(
             nn.Linear(self.time_dim, self.time_dim),
             Swish(),
             nn.Linear(self.time_dim, self.time_dim),
@@ -74,9 +67,17 @@ class TimeEmbedding(nn.Module):
         )
 
         if self.cond_dim is not None:
-            self.fc_layer_2 = nn.Linear(self.cond_dim, self.time_dim)
+            self.cond_layer = nn.Sequential(
+                nn.Linear(self.cond_dim, self.time_dim),
+                Swish(),
+                nn.Linear(self.time_dim, self.time_dim),
+                Swish(),
+                nn.Linear(self.time_dim, self.time_dim),
+                Swish(),
+                nn.Linear(self.time_dim, self.time_dim)
+            )
         else:
-            self.fc_layer_2 = None
+            self.cond_layer = None
 
     def forward(self, t, cond=None):
         # Sinusoidal Position embeddings.
@@ -88,11 +89,11 @@ class TimeEmbedding(nn.Module):
         time_emb = t[:, None] * time_emb[None, :]
         time_emb = torch.cat((time_emb.sin(), time_emb.cos()), dim=1)
         
-        time_emb = self.fc_layer(time_emb)
+        time_emb = self.time_layer(time_emb)
         
         cond_emb = 0
-        if self.fc_layer_2 is not None:
-            cond_emb = self.fc_layer_2(cond)
+        if self.cond_layer is not None:
+            cond_emb = self.cond_layer(cond)
         emb = time_emb + cond_emb
         return emb
 
@@ -149,7 +150,7 @@ class AttentionBlock(nn.Module):
         res = torch.einsum('bijh,bjhd->bihd', attn, v)
         
         # Reshape to N, seq, heads * d_k.
-        res = res.view(N, -1, self.heads * self.d_k)
+        res = res.reshape(N, -1, self.heads * self.d_k)
         
         # Transform to N, seq, channels.
         res = self.output(res)
@@ -163,62 +164,12 @@ class AttentionBlock(nn.Module):
 
 
 """
-Time Embedded Conv. Block.
-"""
-class UNet_ConvBlock(nn.Module):
-    def __init__(self, time_channels, in_channels, out_channels, groups=32):
-        
-        super().__init__()
-        
-        self.conv_layer = nn.Sequential(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=3,
-                padding=1),
-            Swish())
-        self.adagn = AdaGN(time_channels, out_channels, groups=groups)
-
-    def forward(self, x, t):
-        x = self.conv_layer(x)
-        x = self.adagn(x, t)
-        return x
-
-
-"""
-Conv. Block.
-"""
-class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, use_activation=True):
-        super().__init__()
-        if use_activation:
-            self.conv_layer = nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=3,
-                    padding=1),
-                Swish())
-        else:
-            self.conv_layer = nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=3,
-                    padding=1))
-
-    def forward(self, x, t=None):
-        _ = t
-        x = self.conv_layer(x)
-        return x
-
-
-"""
 Upsample using ConvTranspose2d.
 """
 class UpsampleBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
+
         self.conv_layer = nn.Sequential(
             nn.ConvTranspose2d(
                 in_channels,
@@ -228,9 +179,8 @@ class UpsampleBlock(nn.Module):
                 padding=1),
             Swish(),)
 
-
-    def forward(self, x, t=None):
-        _ = t
+    def forward(self, x, emb=None):
+        _ = emb
         x = self.conv_layer(x)
         return x
 
@@ -241,6 +191,7 @@ Downsample using Conv2d.
 class DownsampleBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
+
         self.conv_layer = nn.Sequential(
             nn.Conv2d(
                 in_channels,
@@ -250,9 +201,47 @@ class DownsampleBlock(nn.Module):
                 padding=1),
             Swish())
 
-    def forward(self, x, t=None):
-        _ = t
+    def forward(self, x, emb=None):
+        _ = emb
         x = self.conv_layer(x)
+        return x
+
+
+"""
+Conditional Embedded Conv. Block.
+"""
+class UNet_ConvBlock(nn.Module):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            use_activation=True,
+            emb_dim=None,
+            groups=32):
+        super().__init__()
+        
+        conv_list = [
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                padding=1)
+        ]
+        if use_activation:
+            conv_list.append(Swish())
+        self.conv_layer = nn.Sequential(*conv_list)
+
+        if emb_dim is not None:
+            self.adagn = AdaGN(
+                emb_dim,
+                out_channels,
+                groups=groups)
+
+    def forward(self, x, emb=None):
+        x = self.conv_layer(x)
+        
+        if emb is not None:
+            x = self.adagn(x, emb)
         return x
 
 
@@ -264,25 +253,23 @@ class ResidualBlock(nn.Module):
             self,
             in_channels,
             out_channels,
-            time_dim=None):
+            use_activation=True,
+            emb_dim=None,
+            groups=32):
         super().__init__()
 
-        if time_dim is not None:
-            self.conv_block_1 = UNet_ConvBlock(
-                time_dim,
-                in_channels,
-                out_channels)
-            self.conv_block_2 = UNet_ConvBlock(
-                time_dim,
-                out_channels,
-                out_channels)
-        else:
-            self.conv_block_1 = ConvBlock(
-                in_channels,
-                out_channels)
-            self.conv_block_2 = ConvBlock(
-                out_channels,
-                out_channels)
+        self.conv_block_1 = UNet_ConvBlock(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            use_activation=use_activation,
+            emb_dim=emb_dim,
+            groups=groups)
+        self.conv_block_2 = UNet_ConvBlock(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            use_activation=use_activation,
+            emb_dim=emb_dim,
+            groups=groups)
 
         if in_channels != out_channels:
             self.shortcut = nn.Conv2d(
@@ -291,13 +278,11 @@ class ResidualBlock(nn.Module):
                 kernel_size=(1, 1))
         else:
             self.shortcut = nn.Identity()
-        
-        # self.time_emb = nn.Linear(time_dim, out_channels)
-    
-    def forward(self, x, t=None):
+
+    def forward(self, x, emb=None):
         init_x = x
-        x = self.conv_block_1(x, t)
-        x = self.conv_block_2(x, t)
+        x = self.conv_block_1(x, emb)
+        x = self.conv_block_2(x, emb)
         x = x + self.shortcut(init_x)
         return x
 
@@ -307,47 +292,50 @@ U-Net Block.
 """
 class UNetBlock(nn.Module):
     def __init__(
-            self,
-            in_channels,
-            out_channels,
-            time_dim,
-            use_attn=True,
-            block_type=UNetBlockType.MIDDLE, # up, middle, down
-        ):
-
+        self,
+        in_channels,
+        out_channels,
+        emb_dim,
+        num_resnet_blocks=1,
+        use_attn=True,
+        num_heads=1,
+        dim_per_head=None,
+        groups=32,
+        block_type=UNetBlockType.DOWN):
         super().__init__()
 
         hidden_channels = in_channels
 
-        self.use_attn = use_attn
-        self.block_type = block_type
+        self.res_layers = nn.ModuleList()
+        self.attn_layers = nn.ModuleList()
+        for layer_count in range(num_resnet_blocks):
+            self.res_layers.append(
+                ResidualBlock(
+                    in_channels=in_channels if layer_count == 0 else hidden_channels,
+                    out_channels=hidden_channels,
+                    emb_dim=emb_dim))
+            if use_attn:
+                self.attn_layers.append(
+                    AttentionBlock(
+                        channels=hidden_channels,
+                        heads=num_heads,
+                        d_k=dim_per_head,
+                        groups=groups))
+            else:
+                self.attn_layers.append(nn.Identity())
 
-        if self.use_attn:
-            self.attn_layer = AttentionBlock(hidden_channels)
-        else:
-            self.attn_layer = nn.Identity()
-
-        self.in_layer = ResidualBlock(
-            in_channels=in_channels,
-            out_channels=hidden_channels,
-            time_dim=time_dim)
-        
-        if self.block_type == UNetBlockType.DOWN:
+        if block_type == UNetBlockType.DOWN:
             self.out_layer = DownsampleBlock(
                 in_channels=hidden_channels,
                 out_channels=out_channels)
-        elif self.block_type == UNetBlockType.MIDDLE:
-            self.out_layer = ResidualBlock(
-                in_channels=hidden_channels,
-                out_channels=out_channels,
-                time_dim=time_dim)
-        elif self.block_type == UNetBlockType.UP:
+        elif block_type == UNetBlockType.UP:
             self.out_layer = UpsampleBlock(
                 in_channels=hidden_channels,
                 out_channels=out_channels)
 
-    def forward(self, x, t=None):
-        x = self.in_layer(x, t)
-        x = self.attn_layer(x)
-        x = self.out_layer(x, t)
+    def forward(self, x, emb=None):
+        for res_layer, attn_layer in zip(self.res_layers, self.attn_layers):
+            x = res_layer(x, emb)
+            x = attn_layer(x)
+        x = self.out_layer(x, emb)
         return x

@@ -1,8 +1,5 @@
-import math
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .custom_layers import *
 
@@ -13,12 +10,16 @@ U-Net Architecture.
 class U_Net(nn.Module):
     def __init__(
             self,
+            num_resnet_blocks=5,
             in_channel=3,
             out_channel=3,
-            num_layers=5,
-            attn_layers=[2, 3, 4],
             time_dim=64,
             cond_dim=None,
+            num_layers=5,
+            attn_layers=[2, 3, 4],
+            num_heads=1,
+            dim_per_head=None,
+            groups=32,
             min_channel=128,
             max_channel=512,
             image_recon=False):
@@ -27,72 +28,68 @@ class U_Net(nn.Module):
         # Asserts to ensure params are valid to prevent wierd issues.
         assert isinstance(num_layers, int)
         assert isinstance(attn_layers, list)
-        assert num_layers > 1
+        assert num_layers >= 1
         for attn_layer in attn_layers:
             assert isinstance(attn_layer, int)
-            assert attn_layer > 0
+            assert attn_layer >= 0
             assert attn_layer < num_layers
-        
-        self.image_recon = image_recon
-        self.time_dim = time_dim
-        self.cond_dim = cond_dim
-        self.min_channel = min_channel
-        self.max_channel = max_channel
 
         # Channels to use in each layer, doubles until max_channel is reached.
-        channel_layers = [self.min_channel]
-        channel = self.min_channel
+        channel_layers = [min_channel]
+        channel = min_channel
         for _ in range(num_layers):
             channel = channel * 2
             channel_layers.append(
-                self.max_channel if channel > self.max_channel else channel)
+                max_channel if channel > max_channel else channel)
 
-        # Time Embedding Layer.
+        # Conditional Embedding Layer.
         if time_dim is not None:
             # Adds Conditional to Time Embedding if any (Seems to work).
-            self.time_emb = TimeEmbedding(self.time_dim, self.cond_dim)
+            self.cond_emb = ConditionalEmbedding(time_dim, cond_dim)
         else:
-            self.time_emb = None
+            self.cond_emb = None
         
+        self.in_layer = nn.Sequential(
+            UNet_ConvBlock(
+                in_channel,
+                channel_layers[0],
+                use_activation=True,
+                emb_dim=None,),
+            UNet_ConvBlock(
+                in_channels=channel_layers[0],
+                out_channels=channel_layers[0],
+                use_activation=True,
+                emb_dim=None,)
+        )
+
         # Down Section.
         self.down_layers = nn.ModuleList()
-        self.down_layers.append(
-            ConvBlock(
-                in_channels=in_channel,
-                out_channels=min_channel,
-                use_activation=False))
-
         for layer_count in range(0, num_layers, 1):
             self.down_layers.append(
                 UNetBlock(
                     in_channels=channel_layers[layer_count],
                     out_channels=channel_layers[layer_count + 1],
-                    time_dim=self.time_dim,
+                    emb_dim=time_dim,
+                    num_resnet_blocks=num_resnet_blocks,
                     use_attn=layer_count in attn_layers,
-                    block_type=UNetBlockType.DOWN
-                )
+                    num_heads=num_heads,
+                    dim_per_head=dim_per_head,
+                    groups=groups,
+                    block_type=UNetBlockType.DOWN)
             )
 
         # Middle Section.
-        self.middle_layer_pre = UNetBlock(
-            in_channels=channel_layers[-1],
-            out_channels=channel_layers[-1],
-            time_dim=self.time_dim,
-            use_attn=True,
-            block_type=UNetBlockType.MIDDLE)
         self.middle_layer = nn.Sequential(
-            ConvBlock(
+            UNet_ConvBlock(
                 in_channels=channel_layers[-1],
-                out_channels=channel_layers[-1]),
-            ConvBlock(
+                out_channels=channel_layers[-1],
+                use_activation=True,
+                emb_dim=None,),
+            UNet_ConvBlock(
                 in_channels=channel_layers[-1],
-                out_channels=channel_layers[-1]))
-        self.middle_layer_post = UNetBlock(
-            in_channels=channel_layers[-1],
-            out_channels=channel_layers[-1],
-            time_dim=self.time_dim,
-            use_attn=True,
-            block_type=UNetBlockType.MIDDLE)
+                out_channels=channel_layers[-1],
+                use_activation=True,
+                emb_dim=None,))
 
         # Up Section.
         self.up_layers = nn.ModuleList()
@@ -101,28 +98,33 @@ class U_Net(nn.Module):
                 UNetBlock(
                     in_channels=channel_layers[layer_count + 1] * 2,   # Doubles channels
                     out_channels=channel_layers[layer_count],
-                    time_dim=self.time_dim,
+                    emb_dim=time_dim,
+                    num_resnet_blocks=num_resnet_blocks,
                     use_attn=layer_count in attn_layers,
-                    block_type=UNetBlockType.UP
-                )
+                    num_heads=num_heads,
+                    dim_per_head=dim_per_head,
+                    groups=groups,
+                    block_type=UNetBlockType.UP)
             )
-        
+
         # Output Section.
-        out_layers = []
-        out_layers.append(
-            ConvBlock(
+        out_layers_list = []
+        out_layers_list.append(
+            UNet_ConvBlock(
                 in_channels=channel_layers[0],
                 out_channels=channel_layers[0],
-                use_activation=True))
-        out_layers.append(
-            ConvBlock(
+                use_activation=True,
+                emb_dim=None,))
+        out_layers_list.append(
+            UNet_ConvBlock(
                 in_channels=channel_layers[0],
                 out_channels=out_channel,
-                use_activation=False))
+                use_activation=False,
+                emb_dim=None,))
         if image_recon:
-            out_layers.append(nn.Tanh())
+            out_layers_list.append(nn.Tanh())
         
-        self.out_layers = nn.Sequential(*out_layers)
+        self.out_layers = nn.Sequential(*out_layers_list)
 
     def custom_load_state_dict(self, state_dict):
         own_state = self.state_dict()
@@ -142,29 +144,27 @@ class U_Net(nn.Module):
     def forward(self, x, t=None, cond=None):
         prev_out = []
 
-        if self.time_emb is not None:
-            # Time Embedding (t).
-            t_emb = self.time_emb(t, cond)
+        if self.cond_emb is not None:
+            # Time + Cond Embedding.
+            cond_emb = self.cond_emb(t, cond)
         else:
-            t_emb = None
-
+            cond_emb = None
+        
         # Down Section.
-        x = self.down_layers[0](x)
-        for down_layer in self.down_layers[1:]:
-            x = down_layer(x, t_emb)
+        x = self.in_layer(x)
+        for down_layer in self.down_layers:
+            x = down_layer(x, cond_emb)
             prev_out.append(x)
 
         # Middle Section.
-        x = self.middle_layer_pre(x, t_emb)
-        z = self.middle_layer(x)
-        x = self.middle_layer_post(z, t_emb)
+        x = self.middle_layer(x)
 
         # Up Section.
         for up_layer in self.up_layers:
             prev_in = prev_out.pop()
             x = torch.cat((x, prev_in), dim=1)
-            x = up_layer(x, t_emb)
-            
-        x = self.out_layers(x)
-        return x
+            x = up_layer(x, cond_emb)
 
+        # Returns duffusion output.
+        x_out = self.out_layers(x)
+        return x_out
