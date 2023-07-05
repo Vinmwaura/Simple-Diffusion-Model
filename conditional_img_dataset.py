@@ -1,9 +1,6 @@
-import os
-import json
 import random
 
 import cv2
-import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -15,12 +12,13 @@ from utils import *
 
 
 """
-Custom Image Loader using Opencv2 + TinyDB(NoSQL) to load images and their classification.
+Custom Image Loader using Opencv2 + TinyDB(NoSQL) to load images and their labels.
 """
-class ClassifierImgDataset(Dataset):
+class ConditionalImgDataset(Dataset):
     def __init__(
             self,
             dataset_path=None):
+
         dataset_db = TinyDB(dataset_path)
         data_tbl = dataset_db.table("Data")
         assert len(data_tbl) > 0
@@ -30,8 +28,7 @@ class ClassifierImgDataset(Dataset):
 
         self.all_labels = labels_tbl.all()[0]["labels"]
         self.all_data = data_tbl.all()
-        # self.all_data = data_tbl.search((where("k_means_41")==1) | (where("k_means_65")==1))
-        random.shuffle(self.all_data)
+        random.shuffle(self.all_data)  # Initial shuffle in case dataset is sorted.
 
         self.dataset = []
         for data in self.all_data:
