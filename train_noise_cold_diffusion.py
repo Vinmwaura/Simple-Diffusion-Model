@@ -1,4 +1,5 @@
 import os
+import csv
 import glob
 import logging
 
@@ -10,9 +11,6 @@ import torch.nn.functional as F
 
 # U Net Model.
 from models.U_Net import U_Net
-
-# Custom Image Dataset Loader.
-from img_dataset import ImageDataset
 
 # Degradation Operators.
 from degraders import *
@@ -35,9 +33,10 @@ def main():
     lr_steps = 100_000  # Global steps in between halving learning rate.
     max_epoch = 1_000
     plot_img_count = 25
+    use_conditional = True  # Embed conditional information into the model i.e One-hot encoding.
+
     dataset_path = None
     out_dir = None
-
     assert dataset_path is not None
     assert out_dir is not None
     os.makedirs(out_dir, exist_ok=True)
@@ -49,8 +48,8 @@ def main():
     config_checkpoint = None
 
     # Model Params.
-    diffusion_lr = 2e-5
-    batch_size = 14
+    diffusion_lr = (2e-5) * (0.5**0)
+    batch_size = 8
     
     # Diffusion Params.
     # Linear, Cosine Schedulers
@@ -58,9 +57,15 @@ def main():
     
     if noise_scheduling == NoiseScheduler.LINEAR:
         beta_1 = 5e-3
-        beta_T = 5e-3
+        beta_T = 9e-3
     min_noise_step = 1  # t_1
-    max_noise_step = 1_000  # T
+    max_noise_step = 1_000  # Max timestep used in noise scheduler.
+    max_actual_noise_step = 1_000  # Max timestep used in training step (For ensemble models training).
+    skip_step = 10  # Step to be skipped when sampling.
+    assert max_actual_noise_step > min_noise_step
+    assert max_noise_step > min_noise_step
+    assert skip_step < max_actual_noise_step and skip_step > 0
+    assert min_noise_step > 0
 
     log_path = os.path.join(out_dir, f"{project_name}.log")
     logging.basicConfig(
@@ -73,40 +78,87 @@ def main():
         ],
         level=logging.DEBUG)
 
-    # Model.
+    # Model Params.
+    in_channel = 3
+    out_channel = 3
+    num_layers = 4
+    num_resnet_block = 1
+    attn_layers = [2, 3]
+    attn_heads = 1
+    attn_dim_per_head = None
+    time_dim = 512
+    cond_dim = 75
+    min_channel = 256
+    max_channel = 512
+    img_recon = True
+
+    # Model.    
     diffusion_net = U_Net(
-        in_channel=6,
-        out_channel=3,
-        num_layers=5,
-        attn_layers=[2, 3, 4],
-        time_channel=64,
-        min_channel=128,
-        max_channel=512,
-        image_recon=True)
+        in_channel=in_channel,
+        out_channel=out_channel,
+        num_layers=num_layers,
+        num_resnet_blocks=num_resnet_block,
+        attn_layers=attn_layers,
+        num_heads=attn_heads,
+        dim_per_head=attn_dim_per_head,
+        time_dim=time_dim,
+        cond_dim=cond_dim,
+        min_channel=min_channel,
+        max_channel=max_channel,
+        image_recon=img_recon)
 
     # Initialize gradient scaler.
     scaler = torch.cuda.amp.GradScaler()
-
-    # List of image dataset.
-    img_regex = os.path.join(dataset_path, "*.jpg")
-    img_list = glob.glob(img_regex)
-
-    assert len(img_list) > 0
     
     # Dataset and DataLoader.
-    dataset = ImageDataset(img_paths=img_list)
+    # Custom Image Dataset Loader.
+    if use_conditional:
+        from conditional_img_dataset import ConditionalImgDataset
+        dataset = ConditionalImgDataset(dataset_path=dataset_path)
+    else:
+        from img_dataset import ImageDataset
+
+        # List of image dataset.
+        img_regex = os.path.join(dataset_path, "*.jpg")
+        img_list = glob.glob(img_regex)
+
+        assert len(img_list) > 0
+
+        dataset = ImageDataset(img_paths=img_list)
+
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=4,
         shuffle=True)
+    plot_dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=plot_img_count,
+        num_workers=1,
+        shuffle=False)
+    if use_conditional:
+        plot_imgs, plot_labels = next(iter(plot_dataloader))
+        labels_path = os.path.join(out_dir, "labels.txt")
+
+        header = dataset.get_labels()
+        plot_values = plot_labels.cpu().tolist()
+        csv_data = [header] + plot_values
+
+        with open(labels_path, "a") as f:
+            wr = csv.writer(f)
+            wr.writerows(csv_data)
+
+        plot_labels = plot_labels.to(device)
+    else:
+        plot_imgs = next(iter(plot_dataloader))
+        plot_labels = None
 
     # Load Diffusion Model Checkpoints.
     if diffusion_checkpoint is not None:
         diffusion_status, diffusion_dict= load_checkpoint(diffusion_checkpoint)
         assert diffusion_status
 
-        diffusion_net.load_state_dict(diffusion_dict["model"])
+        diffusion_net.custom_load_state_dict(diffusion_dict["model"])
         diffusion_net = diffusion_net.to(device)
         
         diffusion_optim = torch.optim.Adam(
@@ -132,8 +184,6 @@ def main():
         if noise_scheduling == NoiseScheduler.LINEAR:
             beta_1 = config_dict["beta_1"]
             beta_T = config_dict["beta_T"]
-        min_noise_step = config_dict["min_noise_step"]
-        max_noise_step = config_dict["max_noise_step"]
         starting_epoch = config_dict["starting_epoch"]
         global_steps = config_dict["global_steps"]
 
@@ -153,13 +203,26 @@ def main():
     logging.info("#" * 100)
     logging.info(f"Train Parameters:")
     logging.info(f"Max Epoch: {max_epoch:,}")
-    logging.info(f"Dataset Path: {dataset_path}")
+    logging.info(f"Classifier Dataset Path: {dataset_path}")
     logging.info(f"Output Path: {out_dir}")
-    logging.info(f"Checkpoint Steps: {checkpoint_steps}")
+    logging.info(f"Checkpoint Steps: {checkpoint_steps:,}")
+    logging.info(f"Batch size: {batch_size:,}")
+    logging.info(f"Diffusion LR: {diffusion_optim.param_groups[0]['lr']:.5f}")
+    logging.info(f"Use Conditional: {use_conditional}")
     logging.info("#" * 100)
     logging.info(f"Model Parameters:")
-    logging.info(f"Diffusion LR: {diffusion_optim.param_groups[0]['lr']:.5f}")
-    logging.info(f"Batch size: {batch_size:,}")
+    logging.info(f"In Channel: {in_channel:,}")
+    logging.info(f"Out Channel: {out_channel:,}")
+    logging.info(f"Num Layers: {num_layers:,}")
+    logging.info(f"Num Resnet Block: {num_resnet_block:,}")
+    logging.info(f"Attn Layers: {attn_layers}")
+    logging.info(f"Attn Heads: {attn_heads:,}")
+    logging.info(f"Attn dim per head: {attn_dim_per_head}")
+    logging.info(f"Time Dim: {time_dim:,}")
+    logging.info(f"Cond Dim: {cond_dim}")
+    logging.info(f"Min Channel: {min_channel:,}")
+    logging.info(f"Max Channel: {max_channel:,}")
+    logging.info(f"Img Recon: {img_recon}")
     logging.info("#" * 100)
     logging.info(f"Diffusion Parameters:")
     if noise_scheduling == NoiseScheduler.LINEAR:
@@ -167,6 +230,7 @@ def main():
         logging.info(f"beta_T: {beta_T:,.5f}")
     logging.info(f"Min Noise Step: {min_noise_step:,}")
     logging.info(f"Max Noise Step: {max_noise_step:,}")
+    logging.info(f"Max Actual Noise Step: {max_actual_noise_step:,}")
     logging.info("#" * 100)
 
     for epoch in range(starting_epoch, max_epoch):
@@ -176,13 +240,26 @@ def main():
         # Number of iterations.
         training_count = 0
 
-        for index, tr_data in enumerate(dataloader):
+        for index, data in enumerate(dataloader):
             training_count += 1
             
-            tr_data = tr_data.to(device)
-            hflip_data = hflip_transformations(tr_data)
+            if use_conditional:
+                tr_data, labels = data
+
+                tr_data = tr_data.to(device)
+                labels = labels.to(device)
+            else:
+                tr_data = data.to(device)
+                labels = None  # No label placeholder.
+
+            # hflip_data = hflip_transformations(tr_data)
+            hflip_data = torchvision.transforms.Lambda(
+                lambda x: torch.stack([hflip_transformations(x_) for x_ in x]))(tr_data)
 
             N, C, H, W = hflip_data.shape
+
+            # eps Noise.
+            noise = torch.randn_like(hflip_data)
 
             #################################################
             #               Diffusion Training.             #
@@ -192,13 +269,10 @@ def main():
             # Random Noise Step(t).
             rand_noise_step = torch.randint(
                 low=min_noise_step,
-                high=max_noise_step,
+                high=max_actual_noise_step,
                 size=(N, ),
                 device=device)
-            
-            # eps Noise.
-            noise = torch.randn_like(hflip_data)
-    
+
             # Train model.
             diffusion_net.train()
 
@@ -213,8 +287,9 @@ def main():
 
                 x0_approx_recon = diffusion_net(
                     x_t,
-                    rand_noise_step)
-                
+                    rand_noise_step,
+                    labels)
+
                 diffusion_loss = F.mse_loss(
                     x0_approx_recon,
                     hflip_data)
@@ -240,8 +315,6 @@ def main():
             # Checkpoint and Plot Images.
             if global_steps % checkpoint_steps == 0 and global_steps >= 0:
                 config_state = {
-                    "min_noise_step": min_noise_step,
-                    "max_noise_step": max_noise_step,
                     "starting_epoch": starting_epoch,
                     "global_steps": global_steps}
                 
@@ -273,10 +346,22 @@ def main():
 
                 # X_T ~ N(0, I)
                 noise = torch.randn((plot_img_count, C, H, W), device=device)
-                x_t_plot = 1 * noise
+
+                if max_actual_noise_step < max_noise_step:
+                    plot_imgs = plot_imgs.to(device)
+                    x_t_plot = noise_degradation(
+                        img=plot_imgs,
+                        steps=torch.tensor([max_actual_noise_step], device=device),
+                        eps=noise)
+                else:
+                    x_t_plot = 1 * noise
 
                 with torch.no_grad():
-                    steps = list(range(max_noise_step, min_noise_step - 1, -10)) + [1]
+                    steps = list(range(max_actual_noise_step, min_noise_step - 1, -skip_step)) + [1]
+
+                    # Includes timestep 1 into the steps if not included.
+                    if 1 not in steps:
+                        steps = steps + [1]
 
                     for count in range(len(steps)):
                         # t: Time Step
@@ -286,7 +371,8 @@ def main():
                         # x_t_combined = torch.cat((x_t_plot, eps_diffusion_approx), dim=1)
                         x0_recon_approx_plot = diffusion_net(
                             x_t_plot,
-                            t)
+                            t,
+                            plot_labels)
 
                         if count < len(steps) - 1:
                             # t-1: Time Step
@@ -312,12 +398,12 @@ def main():
                             # Improved sampling from Cold Diffusion paper.
                             x_t_plot = x_t_plot - x_t_hat_plot + x_tm1_hat_plot
 
-                        printProgressBar(
-                            max_noise_step - steps[count],
-                            max_noise_step,
-                            prefix = 'Iterations:',
-                            suffix = 'Complete',
-                            length = 50)
+                            printProgressBar(
+                                max_actual_noise_step - steps[count],
+                                max_actual_noise_step - (min_noise_step - 1),
+                                prefix = 'Iterations:',
+                                suffix = 'Complete',
+                                length = 50)
                         
                     plot_sampled_images(
                         sampled_imgs=x0_recon_approx_plot,  # x_0
@@ -325,7 +411,7 @@ def main():
                         dest_path=out_dir)
 
             temp_avg_diffusion = total_diffusion_loss / training_count
-            message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
+            message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | LR: {:.9f}".format(
                 global_steps + 1,
                 index + 1,
                 len(dataloader),
@@ -338,11 +424,8 @@ def main():
 
         # Checkpoint and Plot Images.
         config_state = {
-            "min_noise_step": min_noise_step,
-            "max_noise_step": max_noise_step,
             "starting_epoch": starting_epoch,
-            "global_steps": global_steps
-        }
+            "global_steps": global_steps}
         if noise_scheduling == NoiseScheduler.LINEAR:
             config_state["beta_1"] = beta_1
             config_state["beta_T"] = beta_T
@@ -367,7 +450,7 @@ def main():
             steps=global_steps)
 
         avg_diffusion = total_diffusion_loss / training_count
-        message = "Epoch: {:,} | Diffusion: {:.5f} | lr: {:.9f}".format(
+        message = "Epoch: {:,} | Diffusion: {:.5f} | LR: {:.9f}".format(
             epoch,
             avg_diffusion,
             diffusion_optim.param_groups[0]['lr'])
