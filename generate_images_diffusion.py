@@ -1,63 +1,75 @@
 import os
-import uuid
-import argparse
+import json
 import pathlib
+import argparse
+from datetime import datetime
 
 import torch
+import torch.nn.functional as F
 import torchvision
 
-# Degradation Operators.
 from degraders import *
-
-# U Net Model.
 from models.U_Net import U_Net
 from diffusion_enums import *
 from utils import load_checkpoint, plot_sampled_images, printProgressBar
 
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Generate Images using diffusion models.")
-
+    
     # Trainning Params.
+    parser.add_argument("--seed", help = "Seed value for generating image(Default: None).", type=int, default=None)
+    parser.add_argument("-m", "--model_path", help = "File path to load models json file.", required=True, type=pathlib.Path)
     parser.add_argument("--device", help = "Which device model will use(default='cpu').", choices=['cpu', 'cuda'], type=str, default="cpu")
     parser.add_argument("--dim", help = "Image Dimension. (default: 128).", default=128, type=int)
-    parser.add_argument("-n", help = "Number of images to generate(default=1).", default=1, type=int)
-    
-    # Model Params.
-    parser.add_argument("-m", "--model", help = "File path of diffusion model to be used.", required=True, type=pathlib.Path)
-    parser.add_argument("--in_channel", help = "U Net Model In channel config. (default: 3).", default=3, type=int)
-    parser.add_argument("--out_channel", help = "U Net Model Out channel config. (default: 3).", default=3, type=int)
-    parser.add_argument("--num_layers", help = "U Net Model Layers used. (default: 5).", default=5, type=int)
-    parser.add_argument("--time_dim", help = "U Net time channels used. (default: 64).", default=64, type=int)
-    parser.add_argument("--min_channel", help = "U Net min channels used. (default: 128).", default=128, type=int)
-    parser.add_argument("--max_channel", help = "U Net max channels used. (default: 512).", default=512, type=int)
-    parser.add_argument("--image_recon", help = "U Net model uses tanh in last layer. (default: False).", default=False, type=bool)
-    parser.add_argument("--attn_layers", help = "U Net layers using attention. (default: 2, 3, 4).", nargs='*', default=[2, 3, 4], type=int)
+    parser.add_argument("-n", "--num_images", help = "Number of images to generate(default=1).", default=1, type=int)
     parser.add_argument("-d", "--dest_path", help = "File path to save images generated (Default: out folder).", type=pathlib.Path)
     parser.add_argument("--diff_alg", help = "Diffusion Algorithm to use (default: ddpm).", default="ddpm", choices=[diff_alg.name.lower() for diff_alg in DiffusionAlg])
     parser.add_argument("--noise_alg", help = "Noise Degradation scheduler to use (default: linear).", default="linear", choices=[noise_scheduler.name.lower() for noise_scheduler in NoiseScheduler])
-    parser.add_argument("-b1", "--beta_1", help = "Beta 1 value.", default=5e-3, type=float)
-    parser.add_argument("-bT", "--beta_T", help = "Beta T value.", default=9e-3, type=float)
-    parser.add_argument("-T", "--max_T", help = "Max T value to start from.", default=1000, type=int)
     parser.add_argument("--ddim_step_size", help = "Number of steps to skip when using ddim.", default=10, type=int)
+    parser.add_argument("-T", "--max_T", help = "Max T value for noise scheduling(In cases of Ensemble methods).", default=1_000, type=int)
+    parser.add_argument("-l", "--labels", nargs="*", help="Labels Index.", type=float, default=None)
 
     args = vars(parser.parse_args())
-    try:
-        assert args["n"] > 0
-        img_shape = (args["n"], 3, args["dim"], args["dim"])
 
-        if args["dest_path"] is None:
-            out_dir = "./"
-        else:
-            assert args["dest_path"].exists()
-            out_dir = str(args["dest_path"])
+    # Check if json containing model details exists.
+    assert os.path.isfile(args["model_path"])
+
+    # Loads model details from json file.
+    with open(args["model_path"]) as f:
+        models_details = json.load(f)
+
+    # Seed value for generating images.
+    if args["seed"] is not None:
+        torch.manual_seed(args["seed"])
+
+    # Checks if number of images to generate is valid.
+    assert args["num_images"] > 0
+
+    # Path to store generated images, defaults to same directory.
+    if args["dest_path"] is None:
+        out_dir = "./"
+    else:
+        assert args["dest_path"].exists()
+        out_dir = str(args["dest_path"])
+
+    # X_T ~ N(0, I)
+    img_shape = (args["num_images"], 3, args["dim"], args["dim"])
+    x_t = torch.randn(img_shape, device=args["device"])
+
+    for model_dict in models_details["models"]:
+        # TODO: Allow for multiple conditionals input.
+        if model_dict["cond_dim"] is not None:
+            assert args["labels"] is not None
+            assert len(args["labels"]) == model_dict["cond_dim"]
+
+            labels_tensor = torch.tensor(args["labels"]).float().to(args["device"])
 
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
         if args["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
             noise_degradation = NoiseDegradation(
-                args["beta_1"],
-                args["beta_T"],
+                model_dict["beta_1"],
+                model_dict["beta_T"],
                 args["max_T"],
                 args["device"])
         elif args["noise_alg"] == NoiseScheduler.COSINE.name.lower():
@@ -67,20 +79,23 @@ if __name__ == "__main__":
 
         # Diffusion Model.
         diffusion_net = U_Net(
-            in_channel=args["in_channel"],
-            out_channel=args["out_channel"],
-            num_layers=args["num_layers"],
-            attn_layers=args["attn_layers"],
-            time_dim=args["time_dim"],
-            min_channel=args["min_channel"],
-            max_channel=args["max_channel"],
-            image_recon=args["image_recon"],
+            in_channel=model_dict["in_channel"],
+            out_channel=model_dict["out_channel"],
+            num_layers=model_dict["num_layers"],
+            num_resnet_blocks=model_dict["num_resnet_block"],
+            attn_layers=model_dict["attn_layers"],
+            num_heads=model_dict["attn_heads"],
+            dim_per_head=model_dict["attn_dim_per_head"],
+            time_dim=model_dict["time_dim"],
+            cond_dim=model_dict["cond_dim"],
+            min_channel=model_dict["min_channel"],
+            max_channel=model_dict["max_channel"],
+            image_recon=model_dict["image_recon"],
         ).to(args["device"])
 
         # Load Diffusion Checkpoints.
-        assert args["model"].exists()
-        assert args["model"].is_file()
-        load_status, diffusion_checkpoint = load_checkpoint(str(args["model"]))
+        assert os.path.isfile(model_dict["model_path"])
+        load_status, diffusion_checkpoint = load_checkpoint(model_dict["model_path"])
         assert load_status
 
         diffusion_net.load_state_dict(diffusion_checkpoint["model"])
@@ -88,12 +103,9 @@ if __name__ == "__main__":
         # Evaluate model.
         diffusion_net.eval()
 
-        # X_T ~ N(0, I)
-        x_t = torch.randn(img_shape, device=args["device"])
-
         with torch.no_grad():
             if args["diff_alg"] == DiffusionAlg.DDPM.name.lower():
-                for noise_step in range(args["max_T"], 0, -1):
+                for noise_step in range(model_dict["max_noise"], model_dict["min_noise"] - 1, -1):
                     # t: Time Step
                     t = torch.tensor([noise_step], device=args["device"])
 
@@ -103,7 +115,8 @@ if __name__ == "__main__":
                     # eps_param(x_t, t).
                     noise_approx = diffusion_net(
                         x_t,
-                        t)
+                        t,
+                        labels_tensor)
 
                     # z ~ N(0, I) if t > 1, else z = 0.
                     if noise_step > 1:
@@ -124,20 +137,17 @@ if __name__ == "__main__":
                     x_t = x_less_degraded
 
                     printProgressBar(
-                        args["max_T"] - noise_step,
-                        args["max_T"],
+                        model_dict["max_noise"] - noise_step,
+                        model_dict["max_noise"] - model_dict["min_noise"],
                         prefix = 'Iterations:',
                         suffix = 'Complete',
                         length = 50)
                 
-                picture_name = str(uuid.uuid4())
-                plot_sampled_images(
-                    sampled_imgs=x_less_degraded,  # x_0
-                    file_name=picture_name,
-                    dest_path=out_dir)
-            
             elif args["diff_alg"] == DiffusionAlg.DDIM.name.lower():
-                steps = list(range(args["max_T"], 0, -args["ddim_step_size"])) + [1]
+                steps = list(range(model_dict["max_noise"], model_dict["min_noise"] - 1, -args["ddim_step_size"]))
+
+                if not model_dict["min_noise"] in steps:
+                    steps = steps + [model_dict["min_noise"]]
                         
                 # 0 - Deterministic
                 # 1 - DDPM
@@ -150,7 +160,8 @@ if __name__ == "__main__":
                     # eps_theta(x_t, t).
                     noise_approx = diffusion_net(
                         x_t,
-                        t)
+                        t,
+                        labels_tensor)
 
                     # Variables needed in computing x_t.
                     _, _, alpha_bar_t = noise_degradation.get_timestep_params(t)
@@ -180,22 +191,20 @@ if __name__ == "__main__":
                         x_t = (alpha_bar_tm1**0.5 * x0_approx) + ((1 - alpha_bar_tm1 - sigma**2)**0.5 * noise_approx) + (sigma * eps)
 
                     printProgressBar(
-                        args["max_T"] - steps[count],
-                        args["max_T"],
+                        model_dict["max_noise"] - steps[count],
+                        model_dict["max_noise"] - model_dict["min_noise"],
                         prefix = 'Iterations:',
                         suffix = 'Complete',
                         length = 50)
 
-                x_0 = x_t
-                
-                picture_name = str(uuid.uuid4())
-                plot_sampled_images(
-                    sampled_imgs=x_0,  # x_0
-                    file_name=picture_name,
-                    dest_path=out_dir)
+    # now = datetime.now()
+    now = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    plot_sampled_images(
+        sampled_imgs=x_t,  # x_0
+        file_name=now,
+        dest_path=out_dir)
 
-            print(f"\nSaving generated image: %s" % os.path.join(out_dir, picture_name))
+    print(f"\nSaving generated image: %s" % os.path.join(out_dir, now))
 
-    except Exception as e:
-        print(f"An error occured while generating images: {e}")
-
+if __name__ == "__main__":
+    main()
