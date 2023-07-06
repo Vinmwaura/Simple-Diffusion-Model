@@ -64,6 +64,8 @@ def main():
             assert len(args["labels"]) == model_dict["cond_dim"]
 
             labels_tensor = torch.tensor(args["labels"]).float().to(args["device"])
+        else:
+            labels_tensor = None
 
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
         if args["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
