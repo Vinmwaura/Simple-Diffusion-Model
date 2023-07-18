@@ -113,10 +113,10 @@ def main():
     # Dataset and DataLoader.
     # Custom Image Dataset Loader.
     if use_conditional:
-        from conditional_img_dataset import ConditionalImgDataset
+        from custom_dataset.conditional_img_dataset import ConditionalImgDataset
         dataset = ConditionalImgDataset(dataset_path=dataset_path)
     else:
-        from img_dataset import ImageDataset
+        from custom_dataset.img_dataset import ImageDataset
 
         # List of image dataset.
         img_regex = os.path.join(dataset_path, "*.jpg")

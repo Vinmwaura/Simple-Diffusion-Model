@@ -8,9 +8,10 @@ from torch.utils.data import Dataset
 Custom Image Loader using Opencv2.
 """
 class ImageDataset(Dataset):
-    def __init__(self, img_paths=[]):
+    def __init__(self, img_paths=[], return_filepaths=False):
         # List of file paths for images.
         self.img_paths = img_paths
+        self.return_filepaths = return_filepaths
 
     def __len__(self):
         return len(self.img_paths)
@@ -31,4 +32,7 @@ class ImageDataset(Dataset):
         
         # Permute image to be of format: [C,H,W]
         img_tensor = img_tensor.permute(2, 0, 1)
+
+        if self.return_filepaths:
+            return img_tensor, img_path
         return img_tensor
