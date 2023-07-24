@@ -8,9 +8,9 @@ torch.manual_seed(69)
 import torchvision
 import torch.nn.functional as F
 
-from utils import *
+from utils.utils import *
+from utils.kmeans_utils import *
 
-from kmeans_utils import *
 from img_dataset import ImageDataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
