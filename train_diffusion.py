@@ -4,20 +4,18 @@ import glob
 import logging
 
 import torch
-# torch.manual_seed(69)
-
 import torchvision
 import torch.nn.functional as F
 
 # U Net Model.
 from models.U_Net import U_Net
 
+from diffusion_enums import *
+
 # Degradation Operators.
 from degraders import *
 
-from utils import *
-
-from diffusion_enums import *
+from utils.utils import *
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -32,7 +30,8 @@ def main():
     lr_steps = 100_000  # Global steps in between halving learning rate.
     max_epoch = 1_000
     plot_img_count = 25
-    use_conditional = False  # Embed conditional information into the model i.e One-hot encoding.
+    use_conditional = True  # Embed conditional information into the model i.e One-hot encoding.
+    flip_imgs = False  # Toggles augmenting the images by randomly flipping images horizontally.
     
     dataset_path = None
     out_dir = None
@@ -53,7 +52,7 @@ def main():
     if noise_scheduling == NoiseScheduler.LINEAR:
         beta_1 = 5e-3
         beta_T = 9e-3
-    diffusion_alg = DiffusionAlg.DDPM
+    diffusion_alg = DiffusionAlg.DDIM
 
     min_noise_step = 1  # t_1
     max_noise_step = 1_000  # T
@@ -249,15 +248,15 @@ def main():
             else:
                 tr_data = data.to(device)
                 labels = None  # No label placeholder.
-
+            
             N, C, H, W = tr_data.shape
 
             # eps Noise.
             noise = torch.randn_like(tr_data)
 
-            # hflip_data = hflip_transformations(tr_data)
-            hflip_data = torchvision.transforms.Lambda(
-                lambda x: torch.stack([hflip_transformations(x_) for x_ in x]))(tr_data)
+            if flip_imgs:
+                tr_data = torchvision.transforms.Lambda(
+                    lambda x: torch.stack([hflip_transformations(x_) for x_ in x]))(tr_data)
 
             #################################################
             #             Diffusion Training.               #
@@ -280,7 +279,7 @@ def main():
                 # Noise degraded image (x_t).
                 # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
                 x_t = noise_degradation(
-                    img=hflip_data,
+                    img=tr_data,
                     steps=rand_noise_step,
                     eps=noise)
         

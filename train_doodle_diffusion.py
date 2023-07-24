@@ -15,7 +15,7 @@ from models.U_Net import U_Net
 # Degradation Operators.
 from degraders import *
 
-from utils import *
+from utils.utils import *
 
 from diffusion_enums import *
 
@@ -174,9 +174,6 @@ def main():
             device)
     elif noise_scheduling == NoiseScheduler.COSINE:
         noise_degradation = CosineNoiseDegradation(max_noise_step)
-
-    # Transformation Augmentations.
-    # hflip_transformations = torchvision.transforms.RandomHorizontalFlip(p=0.5)
 
     logging.info("#" * 100)
     logging.info(f"Train Parameters:")

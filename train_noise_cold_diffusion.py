@@ -4,7 +4,6 @@ import glob
 import logging
 
 import torch
-torch.manual_seed(69)
 
 import torchvision
 import torch.nn.functional as F
@@ -18,7 +17,7 @@ from degraders import *
 # Enums.
 from diffusion_enums import NoiseScheduler
 
-from utils import *
+from utils.utils import *
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -34,6 +33,7 @@ def main():
     max_epoch = 1_000
     plot_img_count = 25
     use_conditional = True  # Embed conditional information into the model i.e One-hot encoding.
+    flip_imgs = False  # Toggles augmenting the images by randomly flipping images horizontally.
 
     dataset_path = None
     out_dir = None
@@ -252,14 +252,14 @@ def main():
                 tr_data = data.to(device)
                 labels = None  # No label placeholder.
 
-            # hflip_data = hflip_transformations(tr_data)
-            hflip_data = torchvision.transforms.Lambda(
-                lambda x: torch.stack([hflip_transformations(x_) for x_ in x]))(tr_data)
+            if flip_imgs:
+                tr_data = torchvision.transforms.Lambda(
+                    lambda x: torch.stack([hflip_transformations(x_) for x_ in x]))(tr_data)
 
-            N, C, H, W = hflip_data.shape
+            N, C, H, W = tr_data.shape
 
             # eps Noise.
-            noise = torch.randn_like(hflip_data)
+            noise = torch.randn_like(tr_data)
 
             #################################################
             #               Diffusion Training.             #
@@ -281,7 +281,7 @@ def main():
                 # Noise degraded image (x_t).
                 # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
                 x_t = noise_degradation(
-                    img=hflip_data,
+                    img=tr_data,
                     steps=rand_noise_step,
                     eps=noise)
 
@@ -292,7 +292,7 @@ def main():
 
                 diffusion_loss = F.mse_loss(
                     x0_approx_recon,
-                    hflip_data)
+                    tr_data)
                 
                 assert not torch.isnan(diffusion_loss)
 
