@@ -6,29 +6,101 @@ from datetime import datetime
 
 import torch
 import torch.nn.functional as F
+
 import torchvision
 
-from degraders import *
 from models.U_Net import U_Net
+
+from degraders import *
 from diffusion_enums import *
-from utils import load_checkpoint, plot_sampled_images, printProgressBar
+
+from utils.utils import (
+    load_checkpoint,
+    plot_sampled_images,
+    printProgressBar)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate Images using diffusion models.")
+        description="Generate Images using Cascaded Diffusion models.")
     
-    # Trainning Params.
-    parser.add_argument("--seed", help = "Seed value for generating image(Default: None).", type=int, default=None)
-    parser.add_argument("-m", "--model_path", help = "File path to load models json file.", required=True, type=pathlib.Path)
-    parser.add_argument("--device", help = "Which device model will use(default='cpu').", choices=['cpu', 'cuda'], type=str, default="cpu")
-    parser.add_argument("--dim", help = "Image Dimension. (default: 128).", default=128, type=int)
-    parser.add_argument("-n", "--num_images", help = "Number of images to generate(default=1).", default=1, type=int)
-    parser.add_argument("-d", "--dest_path", help = "File path to save images generated (Default: out folder).", type=pathlib.Path)
-    parser.add_argument("--diff_alg", help = "Diffusion Algorithm to use (default: ddpm).", default="ddpm", choices=[diff_alg.name.lower() for diff_alg in DiffusionAlg])
-    parser.add_argument("--noise_alg", help = "Noise Degradation scheduler to use (default: linear).", default="linear", choices=[noise_scheduler.name.lower() for noise_scheduler in NoiseScheduler])
-    parser.add_argument("--ddim_step_size", help = "Number of steps to skip when using ddim.", default=10, type=int)
-    parser.add_argument("-T", "--max_T", help = "Max T value for noise scheduling(In cases of Ensemble methods).", default=1_000, type=int)
-    parser.add_argument("-l", "--labels", nargs="*", help="Labels Index.", type=float, default=None)
+    # Sampling Params.
+    parser.add_argument(
+        "--seed",
+        help="Seed value for generating image(default: None).",
+        type=int,
+        default=None)
+    parser.add_argument(
+        "-m",
+        "--model_path",
+        help="File path to load models json file.",
+        required=True,
+        type=pathlib.Path)
+    parser.add_argument(
+        "--device",
+        help="Which hardware device model will run on (default='cpu').",
+        choices=['cpu', 'cuda'],
+        type=str,
+        default="cpu")
+    parser.add_argument(
+        "-n",
+        "--num_images",
+        help="Number of images to generate(default=1).",
+        default=1,
+        type=int)
+    parser.add_argument(
+        "-d",
+        "--dest_path",
+        help="File path to save images generated (Default: out folder).",
+        type=pathlib.Path)
+    parser.add_argument(
+        "--diff_alg",
+        help="Diffusion Sampling Algorithm to use (default: ddpm).",
+        default="ddpm",
+        choices=[diff_alg.name.lower() for diff_alg in DiffusionAlg])
+    parser.add_argument(
+        "--noise_alg",
+        help="Noise Degradation scheduler to use (default: linear).",
+        default="linear",
+        choices=[noise_scheduler.name.lower() for noise_scheduler in NoiseScheduler])
+    parser.add_argument(
+        "--sr_noise_alg",
+        help="Super Res. Noise Degradation scheduler to use (default: cosine).",
+        default="cosine",
+        choices=[noise_scheduler.name.lower() for noise_scheduler in NoiseScheduler])
+    parser.add_argument(
+        "--ddim_step_size",
+        help="Number of steps to skip when using ddim.",
+        default=10,
+        type=int)
+    parser.add_argument(
+        "--cold_step_size",
+        help="Number of steps to skip when using cold diffusion.",
+        default=10,
+        type=int)
+    parser.add_argument(
+        "--cond_t",
+        help="Timestep for conditional augmentation(Super Resolution).",
+        default=250,
+        type=int)
+    parser.add_argument(
+        "-T",
+        "--max_T",
+        help="Max T value for noise scheduling(In cases of Ensemble methods).",
+        default=1_000,
+        type=int)
+    parser.add_argument(
+        "-l",
+        "--labels",
+        nargs="*",
+        help="Labels Index.",
+        type=float,
+        default=None)
+    parser.add_argument(
+        "--upsample",
+        help="Apply SuperRes model to upsample.",
+        default=0,
+        choices=[0, 1],
+        type=int)
 
     args = vars(parser.parse_args())
 
@@ -38,11 +110,12 @@ def main():
     # Loads model details from json file.
     with open(args["model_path"]) as f:
         models_details = json.load(f)
-
+    assert len(models_details["models"]) >= 1
+    
     # Seed value for generating images.
     if args["seed"] is not None:
         torch.manual_seed(args["seed"])
-
+    
     # Checks if number of images to generate is valid.
     assert args["num_images"] > 0
 
@@ -53,20 +126,27 @@ def main():
         assert args["dest_path"].exists()
         out_dir = str(args["dest_path"])
 
-    # X_T ~ N(0, I)
-    img_shape = (args["num_images"], 3, args["dim"], args["dim"])
-    x_t = torch.randn(img_shape, device=args["device"])
-
+    noise = None
     for model_dict in models_details["models"]:
-        # TODO: Allow for multiple conditionals input.
+        if noise is None:
+            # X_T ~ N(0, I).
+            img_C = model_dict["img_C"]
+            img_H = model_dict["img_H"]
+            img_W = model_dict["img_W"]
+            img_num = args["num_images"]
+            img_shape = (img_num, img_C, img_H, img_W)
+
+            noise = torch.randn(img_shape, device=args["device"])
+            x_t = 1 * noise
+
+        # TODO: Allow for multiple conditional input e.g Pose Estimation.
         if model_dict["cond_dim"] is not None:
             assert args["labels"] is not None
             assert len(args["labels"]) == model_dict["cond_dim"]
-
             labels_tensor = torch.tensor(args["labels"]).float().to(args["device"])
         else:
             labels_tensor = None
-
+        
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
         if args["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
             noise_degradation = NoiseDegradation(
@@ -78,7 +158,7 @@ def main():
             assert args["ddim_step_size"] > 0
             assert args["ddim_step_size"] <=  args["max_T"]
             noise_degradation = CosineNoiseDegradation(args["max_T"])
-
+        
         # Diffusion Model.
         diffusion_net = U_Net(
             in_channel=model_dict["in_channel"],
@@ -113,7 +193,7 @@ def main():
 
                     # Variables needed in computing x_(t-1).
                     beta_t, alpha_t, alpha_bar_t = noise_degradation.get_timestep_params(t)
-                    
+
                     # eps_param(x_t, t).
                     noise_approx = diffusion_net(
                         x_t,
@@ -144,7 +224,9 @@ def main():
                         prefix = 'Iterations:',
                         suffix = 'Complete',
                         length = 50)
-                
+
+                x0_approx = x_t
+
             elif args["diff_alg"] == DiffusionAlg.DDIM.name.lower():
                 steps = list(range(model_dict["max_noise"], model_dict["min_noise"] - 1, -args["ddim_step_size"]))
 
@@ -199,14 +281,148 @@ def main():
                         suffix = 'Complete',
                         length = 50)
 
-    # now = datetime.now()
     now = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
     plot_sampled_images(
-        sampled_imgs=x_t,  # x_0
-        file_name=now,
+        sampled_imgs=x0_approx,  # x_0
+        file_name=now + f"(H: {img_H}, W: {img_W})",
         dest_path=out_dir)
 
-    print(f"\nSaving generated image: %s" % os.path.join(out_dir, now))
+    print(f"Saving generated image: %s" % os.path.join(out_dir, now))
+
+    # SuperRes Upsampler (Uses Cold-Diffusion implementation).
+    if args["upsample"] and models_details["upsample_models"]:
+        noise = None
+        for model_dict in models_details["upsample_models"]:
+            if noise is None:
+                # X_T ~ N(0, I).
+                img_C = model_dict["img_C"]
+                img_H = model_dict["img_H"]
+                img_W = model_dict["img_W"]
+                img_num = args["num_images"]
+                img_shape = (img_num, img_C, img_H, img_W)
+
+                noise = torch.randn(img_shape, device=args["device"])
+                x_t = 1 * noise
+
+                # Ensure dimension for upsampling is more than previous
+                # image generated.
+                _, _, H_lr, W_lr = x0_approx.shape
+                assert img_H > H_lr
+                assert img_W > W_lr
+
+                x0_approx_upsample = F.interpolate(
+                    x0_approx,
+                    size=(img_H, img_W),
+                    mode="area")
+
+            if model_dict["cond_dim"] is not None:
+                assert args["labels"] is not None
+                assert len(args["labels"]) == model_dict["cond_dim"]
+                labels_tensor = torch.tensor(args["labels"]).float().to(args["device"])
+            else:
+                labels_tensor = None
+
+            # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+            if args["sr_noise_alg"] == NoiseScheduler.LINEAR.name.lower():
+                noise_degradation = NoiseDegradation(
+                    model_dict["beta_1"],
+                    model_dict["beta_T"],
+                    args["max_T"],
+                    args["device"])
+            elif args["sr_noise_alg"] == NoiseScheduler.COSINE.name.lower():
+                assert args["cold_step_size"] > 0
+                assert args["cold_step_size"] <=  args["max_T"]
+                noise_degradation = CosineNoiseDegradation(args["max_T"])
+            
+            x_t_cond_input = noise_degradation(
+                img=x0_approx_upsample,
+                steps=torch.tensor([args["cond_t"]], device=args["device"]),
+                eps=noise)
+            
+            # Diffusion Model.
+            diffusion_net = U_Net(
+                in_channel=model_dict["in_channel"],
+                out_channel=model_dict["out_channel"],
+                num_layers=model_dict["num_layers"],
+                num_resnet_blocks=model_dict["num_resnet_block"],
+                attn_layers=model_dict["attn_layers"],
+                num_heads=model_dict["attn_heads"],
+                dim_per_head=model_dict["attn_dim_per_head"],
+                time_dim=model_dict["time_dim"],
+                cond_dim=model_dict["cond_dim"],
+                min_channel=model_dict["min_channel"],
+                max_channel=model_dict["max_channel"],
+                image_recon=model_dict["image_recon"],
+            ).to(args["device"])
+
+            # Load Diffusion Checkpoints.
+            assert os.path.isfile(model_dict["model_path"])
+            load_status, diffusion_checkpoint = load_checkpoint(model_dict["model_path"])
+            assert load_status
+
+            diffusion_net.load_state_dict(diffusion_checkpoint["model"])
+
+            # Evaluate model.
+            diffusion_net.eval()
+
+            with torch.no_grad():
+                steps = list(range(model_dict["max_noise"], model_dict["min_noise"] - 1, -args["cold_step_size"]))
+
+                # Includes timestep 1 into the steps if not included.
+                if 1 not in steps:
+                    steps = steps + [1]
+
+                for count in range(len(steps)):
+                    # t: Time Step.
+                    t = torch.tensor([steps[count]], device=args["device"])
+
+                    x_t_combined = torch.cat((x_t, x_t_cond_input), dim=1)
+
+                    # Reconstruction: (x0_hat).
+                    # x_t_combined = torch.cat((x_t_plot, eps_diffusion_approx), dim=1)
+                    x0_approx_delta = diffusion_net(
+                        x_t_combined,
+                        t,
+                        labels_tensor)
+
+                    if count < len(steps) - 1:
+                        # t-1: Time Step
+                        tm1 = torch.tensor([steps[count + 1]], device=args["device"])
+
+                        # D(x0_hat, t).
+                        # Noise degraded image (x_t).
+                        # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+                        x_t_hat_plot = noise_degradation(
+                            img=x0_approx_delta,
+                            steps=t,
+                            eps=noise)
+
+                        # D(x0_hat, t-1).
+                        # Noise degraded image (x_t).
+                        # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
+                        x_tm1_hat_plot = noise_degradation(
+                            img=x0_approx_delta,
+                            steps=tm1,
+                            eps=noise)
+                        
+                        # q(x_t-1 | x_t, x_0).
+                        # Improved sampling from Cold Diffusion paper.
+                        x_t = x_t - x_t_hat_plot + x_tm1_hat_plot
+
+                        printProgressBar(
+                            model_dict["max_noise"] - steps[count],
+                            model_dict["max_noise"] - (model_dict["min_noise"] - 1),
+                            prefix = 'Iterations:',
+                            suffix = 'Complete',
+                            length = 50)
+
+        upsample_name = now + f"(H: {img_H}, W: {img_W})"
+        plot_sampled_images(
+            sampled_imgs=x0_approx_upsample + x0_approx_delta,  # x_0
+            file_name=upsample_name,
+            dest_path=out_dir)
+        
+        print(f"Saving generated image: %s" % os.path.join(out_dir, upsample_name))
 
 if __name__ == "__main__":
     main()
