@@ -5,7 +5,16 @@ import torchvision
 
 
 # Print iterations progress
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+def printProgressBar (
+        iteration,
+        total,
+        prefix='',
+        suffix='',
+        decimals=1,
+        length=100,
+        fill='█',
+        printEnd="\r",
+        log=print):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -21,18 +30,18 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
-    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    log(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
     # Print New Line on Complete
     if iteration == total: 
-        print()
+        log()
 
 
-def plot_sampled_images(sampled_imgs, file_name, dest_path=None):
+def plot_sampled_images(sampled_imgs, file_name, dest_path=None, log=print):
     # Convert from BGR to RGB,
     permute = [2, 1, 0]
     sampled_imgs = sampled_imgs[:, permute]
 
-
+    # TODO: Allow multiple images to be saved separately instead of in a grid.
     grid_img = torchvision.utils.make_grid(
         sampled_imgs,
         nrow=5,
@@ -47,14 +56,15 @@ def plot_sampled_images(sampled_imgs, file_name, dest_path=None):
     
     os.makedirs(dir_path, exist_ok=True)
     try:
+        path = os.path.join(dir_path, str(file_name) + ".jpg")
         torchvision.utils.save_image(
             grid_img,
-            os.path.join(dir_path, str(file_name) + ".jpg"))
+            path)
+        log(f"Saving generated image: {path}")
     except Exception as e:
-        print(f"An error occured while plotting reconstructed image: {e}")
+        log(f"An error occured while plotting reconstructed image: {e}")
 
-
-def save_model(model_net, file_name, dest_path, checkpoint=False, steps=0):
+def save_model(model_net, file_name, dest_path, checkpoint=False, steps=0, log=print):
     try:
         if checkpoint:
             f_path = os.path.join(dest_path, "checkpoint")
@@ -69,17 +79,17 @@ def save_model(model_net, file_name, dest_path, checkpoint=False, steps=0):
             os.path.join(f_path, model_name))
         return True
     except Exception as e:
-        print(f"Exception occured while saving model: {e}.")
+        log(f"Exception occured while saving model: {e}.")
         return False
 
-def load_checkpoint(checkpoint_path):
+def load_checkpoint(checkpoint_path, log=print):
     if os.path.exists(checkpoint_path):
-        print(f"Loading checkpoint: {checkpoint_path}")
+        log(f"Loading checkpoint: {checkpoint_path}")
         try:
             checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
             return True, checkpoint
         except Exception as e:
             return False, None
     else:
-        print(f"Checkpoint does not exist.")
+        log(f"Checkpoint does not exist.")
         return False, None

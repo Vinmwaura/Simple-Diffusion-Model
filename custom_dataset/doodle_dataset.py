@@ -1,12 +1,11 @@
 import random
 
 import cv2
+from tinydb import TinyDB
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-
-from tinydb import TinyDB
 
 
 """
@@ -18,10 +17,12 @@ class DoodleImgDataset(Dataset):
             dataset_path=None):
         dataset_db = TinyDB(dataset_path)
         data_tbl = dataset_db.table("Data")
-        assert len(data_tbl) > 0
+        if len(data_tbl) <= 0:
+            raise Exception("No data found in Data table.")
 
         labels_tbl = dataset_db.table("Labels")
-        assert len(labels_tbl) > 0
+        if len(labels_tbl) <= 0:
+            raise Exception("No data found in Labels table.")
 
         self.all_labels = labels_tbl.all()[0]["labels"]
         self.all_data = data_tbl.all()
@@ -40,7 +41,8 @@ class DoodleImgDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
-        assert len(self.dataset) > 0
+        if len(self.dataset) <= 0:
+            raise Exception("No data found in dataset.")
 
         img_path, label_path = self.dataset[index]
         

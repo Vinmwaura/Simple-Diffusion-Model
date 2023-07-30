@@ -25,14 +25,17 @@ class U_Net(nn.Module):
             image_recon=False):
         super().__init__()
         
-        # Asserts to ensure params are valid to prevent wierd issues.
-        assert isinstance(num_layers, int)
-        assert isinstance(attn_layers, list)
-        assert num_layers >= 1
+        # Checks to ensure params are valid to prevent issues.
+        if not isinstance(num_layers, int) or not isinstance(attn_layers, list):
+            raise TypeError("Invalid type!")
+        
+        if num_layers < 1:
+            raise ValueError("Invalid num layer value!")
         for attn_layer in attn_layers:
-            assert isinstance(attn_layer, int)
-            assert attn_layer >= 0
-            assert attn_layer < num_layers
+            if not isinstance(attn_layer, int):
+                raise ValueError("Invalid type in attention layer!")
+            if attn_layer < 0 or attn_layer >= num_layers:
+                raise ValueError("Invalid Attention Layer values!")
 
         # Channels to use in each layer, doubles until max_channel is reached.
         channel_layers = [min_channel]

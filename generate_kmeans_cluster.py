@@ -19,24 +19,33 @@ def main():
     Creates dataset using index of nearest k-means centroid.
     """
     # Training Params.
-    batch_size = 128
     dataset_path = None
+    if dataset_path is None or not os.path.isdir(dataset_path):
+        raise ValueError("Invalid/No dataset_path entered.")
+
     out_csv_file = None
-    assert dataset_path is not None
-    assert out_csv_file is not None
+    if out_csv_file is None or not os.path.isfile(out_csv_file):
+        raise ValueError("Invalid/No out path entered.")
+
+    # Batch size of images computed at once.
+    batch_size = 128
 
     # Centroid checkpoints.
     centroids_checkpoint = None
 
     # Load Centroids.
     centroids_status, centroids_dict= load_checkpoint(centroids_checkpoint)
-    assert centroids_status
+    if not centroids_status:
+        raise Exception("An error occured while loading centroid checkpoint.")
     centroids = centroids_dict["centroids"]
     centroids = centroids.to(device)
     
     # List of image dataset.
     img_regex = os.path.join(dataset_path, "*.jpg")
     img_list = glob.glob(img_regex)
+
+    if len(img_list) == 0:
+        raise Exception("No dataset found!")
 
     # Dataset and DataLoader.
     dataset = ImageDataset(

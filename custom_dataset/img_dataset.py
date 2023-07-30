@@ -17,7 +17,8 @@ class ImageDataset(Dataset):
         return len(self.img_paths)
     
     def __getitem__(self, index):
-        assert len(self.img_paths) > 0
+        if len(self.img_paths) < 0:
+            raise Exception("No data found in img paths.")
 
         img_path = self.img_paths[index]
 

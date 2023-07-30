@@ -20,6 +20,8 @@ from diffusion_enums import NoiseScheduler
 
 from utils.utils import *
 
+from diffusion_sampling_algorithms import cold_diffusion_sampling
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
@@ -30,6 +32,7 @@ def main():
     # SR Params.
     lr_dim = 128
     sr_dim = 256
+    cond_t = 250
 
     # Training Params.
     starting_epoch = 0
@@ -38,13 +41,16 @@ def main():
     lr_steps = 100_000  # Global steps in between halving learning rate.
     max_epoch = 1_000
     plot_img_count = 8
-    use_conditional = True  # Embed conditional information into the model i.e One-hot encoding.
+    use_conditional = False  # Embed conditional information into the model i.e One-hot encoding.
     flip_imgs = False  # Toggles augmenting the images by randomly flipping images horizontally.
 
     dataset_path = None
+    if dataset_path is None:
+        raise ValueError("Invalid/No dataset_path entered.")
+
     out_dir = None
-    assert dataset_path is not None
-    assert out_dir is not None
+    if out_dir is None:
+        raise ValueError("Invalid/No output path entered.")
     os.makedirs(out_dir, exist_ok=True)
 
     # Load Pre-trained optimization configs, ignored if no checkpoint is passed.
@@ -68,10 +74,12 @@ def main():
     max_noise_step = 1_000  # Max timestep used in noise scheduler.
     max_actual_noise_step = 1_000  # Max timestep used in training step (For ensemble models training).
     skip_step = 10  # Step to be skipped when sampling.
-    assert max_actual_noise_step > min_noise_step
-    assert max_noise_step > min_noise_step
-    assert skip_step < max_actual_noise_step and skip_step > 0
-    assert min_noise_step > 0
+    if max_actual_noise_step < min_noise_step\
+          or max_noise_step < min_noise_step\
+              or skip_step > max_actual_noise_step\
+                  or skip_step < 0\
+                      or min_noise_step < 0:
+        raise ValueError("Invalid step values entered!")
 
     log_path = os.path.join(out_dir, f"{project_name}.log")
     logging.basicConfig(
@@ -93,7 +101,7 @@ def main():
     attn_heads = 1
     attn_dim_per_head = None
     time_dim = 512
-    cond_dim = 4
+    cond_dim = None
     min_channel = 128
     max_channel = 512
     img_recon = True
@@ -130,7 +138,8 @@ def main():
 
         random.shuffle(img_list)
 
-        assert len(img_list) > 0
+        if len(img_list) < 0:
+            raise Exception("No dataset found!")
 
         dataset = ImageDataset(img_paths=img_list)
 
@@ -164,7 +173,8 @@ def main():
     # Load Diffusion Model Checkpoints.
     if diffusion_checkpoint is not None:
         diffusion_status, diffusion_dict= load_checkpoint(diffusion_checkpoint)
-        assert diffusion_status
+        if not diffusion_status:
+            raise Exception("An error occured while loading model checkpoint!")
 
         diffusion_net.custom_load_state_dict(diffusion_dict["model"])
         diffusion_net = diffusion_net.to(device)
@@ -187,7 +197,8 @@ def main():
     # Load Config Checkpoints.
     if config_checkpoint is not None:
         config_status, config_dict = load_checkpoint(config_checkpoint)
-        assert config_status
+        if not config_status:
+            raise Exception("An error occured while loading config checkpoint!")
 
         if noise_scheduling == NoiseScheduler.LINEAR:
             beta_1 = config_dict["beta_1"]
@@ -312,7 +323,7 @@ def main():
                 # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
                 x_t_lr = noise_degradation(
                     img=lr_data,
-                    steps=torch.tensor([250], device=device),
+                    steps=torch.tensor([cond_t], device=device),
                     eps=noise)
                 
                 x_t_combined = torch.cat((x_t_sr, x_t_lr), dim=1)
@@ -325,7 +336,8 @@ def main():
                     x0_approx_recon,
                     diff_data)
                 
-                assert not torch.isnan(diffusion_loss)
+                if torch.isnan(diffusion_loss):
+                    raise Exception("NaN encountered during training")
 
             # Scale the loss and do backprop.
             scaler.scale(diffusion_loss).backward()
@@ -372,90 +384,45 @@ def main():
                     checkpoint=True,
                     steps=global_steps)
 
-                # Sample Images and plot.
-                diffusion_net.eval()  # Evaluate model.
-
                 # X_T ~ N(0, I)
                 noise = torch.randn((plot_img_count, C, H, W), device=device)
 
-                if max_actual_noise_step < max_noise_step:
-                    plot_imgs = plot_imgs.to(device)
-                    x_t_plot = noise_degradation(
-                        img=plot_imgs,
-                        steps=torch.tensor([max_actual_noise_step], device=device),
-                        eps=noise)
-                else:
-                    # Low Resolution Images.
-                    plot_imgs = plot_imgs.to(device)
-                    lr_data_plot = F.interpolate(
-                        plot_imgs,
-                        size=(lr_dim, lr_dim),
-                        mode="area")
-                    lr_data_plot = F.interpolate(
-                        lr_data_plot,
-                        size=(sr_dim, sr_dim),
-                        mode="area")
-                    x_t_plot_lr = noise_degradation(
-                        img=lr_data_plot,
-                        steps=torch.tensor([250], device=device),
-                        eps=noise)
-                    x_t_plot_sr = 1 * noise
+                # Conditional Image.
+                plot_imgs = plot_imgs.to(device)
 
-                with torch.no_grad():
-                    steps = list(range(max_actual_noise_step, min_noise_step - 1, -skip_step)) + [1]
+                # Low Resolution Images.
+                lr_data_plot = F.interpolate(
+                    plot_imgs,
+                    size=(lr_dim, lr_dim),
+                    mode="area")
+                lr_data_plot = F.interpolate(
+                    lr_data_plot,
+                    size=(sr_dim, sr_dim),
+                    mode="area")
+                x_t_plot_lr = noise_degradation(
+                    img=lr_data_plot,
+                    steps=torch.tensor([cond_t], device=device),
+                    eps=noise)
+                x_t_plot_sr = 1 * noise
+                
+                # Samples Images from Noise.
+                x0_recon_approx_plot = cold_diffusion_sampling(
+                    diffusion_net=diffusion_net,
+                    noise_degradation=noise_degradation,
+                    x_t=x_t_plot_sr,
+                    noise=noise,
+                    min_noise=min_noise_step,
+                    max_noise=max_actual_noise_step,
+                    cond_img=x_t_plot_lr,
+                    labels_tensor=plot_labels,
+                    skip_step_size=skip_step,
+                    device=device,
+                    log=print)
 
-                    # Includes timestep 1 into the steps if not included.
-                    if 1 not in steps:
-                        steps = steps + [1]
-
-                    for count in range(len(steps)):
-                        # t: Time Step
-                        t = torch.tensor([steps[count]], device=device)
-
-                        x_t_plot = torch.cat((x_t_plot_sr, x_t_plot_lr), dim=1)
-
-                        # Reconstruction: (x0_hat).
-                        # x_t_combined = torch.cat((x_t_plot, eps_diffusion_approx), dim=1)
-                        x0_recon_approx_plot = diffusion_net(
-                            x_t_plot,
-                            t,
-                            plot_labels)
-
-                        if count < len(steps) - 1:
-                            # t-1: Time Step
-                            tm1 = torch.tensor([steps[count + 1]], device=device)
-
-                            # D(x0_hat, t).
-                            # Noise degraded image (x_t).
-                            # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-                            x_t_hat_plot = noise_degradation(
-                                img=x0_recon_approx_plot,
-                                steps=t,
-                                eps=noise)
-
-                            # D(x0_hat, t-1).
-                            # Noise degraded image (x_t).
-                            # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-                            x_tm1_hat_plot = noise_degradation(
-                                img=x0_recon_approx_plot,
-                                steps=tm1,
-                                eps=noise)
-                            
-                            # q(x_t-1 | x_t, x_0).
-                            # Improved sampling from Cold Diffusion paper.
-                            x_t_plot_sr = x_t_plot_sr - x_t_hat_plot + x_tm1_hat_plot
-
-                            printProgressBar(
-                                max_actual_noise_step - steps[count],
-                                max_actual_noise_step - (min_noise_step - 1),
-                                prefix = 'Iterations:',
-                                suffix = 'Complete',
-                                length = 50)
-
-                    plot_sampled_images(
-                        sampled_imgs=x0_recon_approx_plot + lr_data_plot,  # x_0
-                        file_name=f"diffusion_plot_{global_steps}",
-                        dest_path=out_dir)
+                plot_sampled_images(
+                    sampled_imgs=x0_recon_approx_plot + lr_data_plot,  # x_0
+                    file_name=f"diffusion_plot_{global_steps}",
+                    dest_path=out_dir)
 
             temp_avg_diffusion = total_diffusion_loss / training_count
             message = "Cum. Steps: {:,} | Steps: {:,} / {:,} | Diffusion: {:.5f} | LR: {:.9f}".format(

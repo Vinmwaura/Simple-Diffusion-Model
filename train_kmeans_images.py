@@ -26,10 +26,13 @@ def main():
     
     # Training Params.
     dataset_path = None
-    out_dir = None
+    if dataset_path is None:
+        raise ValueError("Invalid/No dataset_path entered.")
 
-    assert dataset_path is not None
-    assert out_dir is not None
+    out_dir = None
+    if out_dir is None:
+        raise ValueError("Invalid/No output path entered.")
+
     os.makedirs(out_dir, exist_ok=True)
 
     # Centroids.
@@ -41,7 +44,8 @@ def main():
     # Load Centroids.
     if centroids_checkpoint is not None:
         centroids_status, centroids_dict= load_checkpoint(centroids_checkpoint)
-        assert centroids_status
+        if not centroids_status:
+            raise Exception("An error occured while loading centroids checkpoint!")
 
         centroids = centroids_dict["centroids"]
         centroids = centroids.to(device)
@@ -61,7 +65,8 @@ def main():
     img_regex = os.path.join(dataset_path, "*.jpg")
     img_list = glob.glob(img_regex)
 
-    assert len(img_list) > 0
+    if len(img_list) <= 0:
+        raise Exception("An error occured loading the dataset!")
 
     # Dataset and DataLoader.
     dataset = ImageDataset(img_paths=img_list)
@@ -127,7 +132,8 @@ def main():
                 suffix = "Complete",
                 length = 50)
 
-        assert (total_data_counter > 0).all()
+        if (total_data_counter <= 0).all():
+            raise ValueError("Value can't be 0 or negative!")
 
         centroids = total_data / total_data_counter
         mqe_ = total_distances / total_data_counter
