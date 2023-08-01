@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime
 
 import cv2
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -104,9 +105,8 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
         raise ValueError("Invalid step size for Cold Diffusion!")
 
     if lr_img is not None:
-        if not torch.is_tensor(lr_img):
+        if not type(lr_img).__module__ == np.__name__:
             raise ValueError("Invalid low resolution image passed!")
-        lr_img = lr_img.to(args["device"])
     else:
         lr_img_path = args["lr_img_path"]
         if lr_img_path is None or not os.path.isfile(lr_img_path) or imghdr.what(lr_img_path) not in SUPPORTED_IMG_FORMATS:
@@ -114,17 +114,17 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
 
         # Check if conditional img file exists.
         lr_img = cv2.imread(str(lr_img_path))
-        
-        # Scale images to be between 1 and -1.
-        lr_img = (lr_img.astype(float) - 127.5) / 127.5
 
-        # Convert image as numpy to Tensor.
-        lr_img = torch.from_numpy(lr_img).float()
-        
-        # Permute image to be of format: [C,H,W]
-        lr_img = lr_img.permute(2, 0, 1)
-        lr_img = lr_img.unsqueeze(0)
-        lr_img = lr_img.to(args["device"])
+    # Scale images to be between 1 and -1.
+    lr_img = (lr_img.astype(float) - 127.5) / 127.5
+
+    # Convert image as numpy to Tensor.
+    lr_img = torch.from_numpy(lr_img).float()
+    
+    # Permute image to be of format: [C,H,W]
+    lr_img = lr_img.permute(2, 0, 1)
+    lr_img = lr_img.unsqueeze(0)
+    lr_img = lr_img.to(args["device"])
 
     """
     Super-Res Upsampler (Uses Cold-Diffusion implementation).
