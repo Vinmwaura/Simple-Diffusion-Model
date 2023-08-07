@@ -142,7 +142,10 @@ def ddim_sampling(
                     suffix='Complete',
                     length=50,
                     log=log)
-    return x0_approx
+    
+    if steps[count] == 1:
+        return x0_approx
+    return x_t
 
 def cold_diffusion_sampling(
         diffusion_net,
