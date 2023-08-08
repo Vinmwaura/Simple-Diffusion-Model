@@ -48,7 +48,8 @@ def main():
                 or skip_step < 0 \
                     or min_noise_step < 0:
         raise ValueError("Invalid step values entered!")
-    
+
+    # Regex to list of images.
     dataset_path = None
     if dataset_path is None:
         raise ValueError("No dataset_path entered.")
@@ -58,7 +59,7 @@ def main():
         raise ValueError("No output path entered.")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Checkpoints.
+    # File path to checkpoints.
     diffusion_checkpoint = None
     config_checkpoint = None
 

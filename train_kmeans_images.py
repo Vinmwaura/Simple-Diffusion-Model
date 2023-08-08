@@ -15,6 +15,9 @@ from img_dataset import ImageDataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+"""
+Creates Centroids from the image dataset to be used as labels for diffusion models.
+"""
 def main():
     project_name = "K-Means-Images"
 

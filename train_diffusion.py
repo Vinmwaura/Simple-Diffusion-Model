@@ -37,6 +37,7 @@ def main():
     use_conditional = True  # Embed conditional information into the model i.e One-hot encoding.
     flip_imgs = True  # Toggles augmenting the images by randomly flipping images horizontally.
     
+    # Regex to list of images or json containing labelled dataset.
     dataset_path = None
     if dataset_path is None:
         raise ValueError("Invalid/No dataset_path entered.")
@@ -47,7 +48,7 @@ def main():
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Checkpoints.
+    # File path to checkpoints.
     diffusion_checkpoint = None
     config_checkpoint = None
 
@@ -96,8 +97,8 @@ def main():
         from custom_dataset.img_dataset import ImageDataset
 
         # List of image dataset.
-        img_regex = os.path.join(dataset_path, "*.jpg")
-        img_list = glob.glob(img_regex)
+        # img_regex = os.path.join(dataset_path, "*.jpg")
+        img_list = glob.glob(dataset_path)
 
         if len(img_list) < 0:
             raise Exception("No dataset found!")

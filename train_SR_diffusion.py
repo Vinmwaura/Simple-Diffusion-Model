@@ -44,6 +44,7 @@ def main():
     use_conditional = False  # Embed conditional information into the model i.e One-hot encoding.
     flip_imgs = False  # Toggles augmenting the images by randomly flipping images horizontally.
 
+    # Regex to list of images or json containing labelled dataset.
     dataset_path = None
     if dataset_path is None:
         raise ValueError("Invalid/No dataset_path entered.")
@@ -56,6 +57,7 @@ def main():
     # Load Pre-trained optimization configs, ignored if no checkpoint is passed.
     load_diffusion_optim = False
 
+    # File path to checkpoints.
     diffusion_checkpoint = None
     config_checkpoint = None
 
@@ -133,8 +135,8 @@ def main():
         from custom_dataset.img_dataset import ImageDataset
 
         # List of image dataset.
-        img_regex = os.path.join(dataset_path, "*.jpg")
-        img_list = glob.glob(img_regex)
+        # img_regex = os.path.join(dataset_path, "*.jpg")
+        img_list = glob.glob(dataset_path)
 
         random.shuffle(img_list)
 
