@@ -24,9 +24,6 @@ from diffusion_sampling_algorithms import (
     ddpm_sampling,
     ddim_sampling)
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
 def main():
     project_name = "Diffusion"
 
@@ -39,8 +36,17 @@ def main():
         help="File path to load json config file.",
         required=True,
         type=pathlib.Path)
+    parser.add_argument(
+        "--device",
+        help="Which hardware device will model run on (default='cpu')?",
+        choices=['cpu', 'cuda'],
+        type=str,
+        default="cpu")
     
     args = vars(parser.parse_args())
+
+    # Device to run model on.
+    device = args["device"]
 
     # Load and Parse config JSON.
     config_json = args["config_path"]

@@ -25,9 +25,6 @@ from utils.utils import *
 
 from diffusion_sampling_algorithms import cold_diffusion_sampling
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
 def main():
     # Loosely similar to SRDiff: Single Image Super-Resolution with Diffusion Probabilistic Models.
     project_name = "SR-Cold-Diffusion"
@@ -41,8 +38,17 @@ def main():
         help="File path to load json config file.",
         required=True,
         type=pathlib.Path)
+    parser.add_argument(
+        "--device",
+        help="Which hardware device will model run on (default='cpu')?",
+        choices=['cpu', 'cuda'],
+        type=str,
+        default="cpu")
     
     args = vars(parser.parse_args())
+
+    # Device to run model on.
+    device = args["device"]
 
     # Load and Parse config JSON.
     config_json = args["config_path"]
