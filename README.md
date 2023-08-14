@@ -64,23 +64,103 @@ In this project only one dataset was trained using this approach but code suppor
 *Figure 6: An ensemble of diffusion models that are specialized for denoising at different intervals of the generative process. From eDiff-I: Text-to-Image Diffusion Models with an Ensemble of Expert Denoisers, by Balaji et al. 2023. Retrieved from https://arxiv.org/pdf/2211.01324.pdf*
 
 ## Requirements
-To be able to run the code you require [anaconda](https://conda.io/) on your machine and create an environment and install dependencies from requirements.txt file by running the following commands:
++ Python 3
++ [Optional] Cuda-enabled GPU or equivalent supported hardware.
+
+## Set-Up
+1. Install [virtualenvwrapper](https://virtualenvwrapper.readthedocs.io/en/latest/install.html).
+2. Create a virtual enviroment:
 ```
-conda create --name diffusion_env --file requirements.txt
+mkvirtualenv diffusion_env
 ```
-To activate this conda environment:
+3. To activate virtualenv:
 ```
-conda activate diffusion_env
+workon diffusion_env
+```
+4. To install the libraries needed by the project run the following script:
+```
+sudo chmod +x install_cpu_requirements.sh
+sh install_cpu_requirements.sh
+```
+
+**NOTE**:
+
+The instructions above only installs the CPU-only Pytorch libraries, which is lighter and runs on most machine.
+
+The code was tested and run on Ubuntu 22.04.3 LTS, which was running on a CUDA-enabled GPU with additional libraries not shown above. If you want to run and/or train using this project with the benefit of speed (hardware acceleration), you will require to install the appropriate [Pytorch](https://pytorch.org/) library and it's dependencies specific to you machine. Afterwhich you can install the additional python libraries needed by the project:
+```
+pip install -r model_requirements.txt
 ```
 
 ## Training Models
+1. Create a training config file by executing the following command and follow the prompts:
++ For Base Diffusion (DDPM / DDIM) and Cold Diffusion Models:
+```
+python create_diffusion_config.py
+```
+
++ For Super-Resolution Diffusion Models:
+```
+python create_sr_diffusion_config.py
+```
+
++ For Base Diffusion (DDPM / DDIM) using images e.g doodles as conditional input:
+```
+python create_doodle_diffusion_config.py
+```
+
+2. To train a model, use the config files created above and run the folowing commands:
+  
++ For Base Diffusion (DDPM / DDIM) models:
+```
+python train_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
++ For Cold Diffusion models:
+```
+python train_noise_cold_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
++ For Base Diffusion (DDPM / DDIM) models using images e.g doodles as conditional input:
+```
+python train_doodle_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
++ For Super-Resolution Diffusion models (Uses Cold-Diffusion algorithm):
+```
+python train_SR_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
 ## Generating Images
+The scripts requires there to be **folder** with **model checkpoint** and a **config file** with its parameters to work.
+
+To generate the above mentioned folder, run the following command in the terminal and follow the prompts (Assumes there exists a trained model checkpoint file and training config file):
+```
+python export_models.py
+```
+
+To generate an image using the model checkpoint and its config file, run either of the following commands:
++ From trained Base Diffusion (DDPM / DDIM) models:
+```
+python generate_images_diffusion.py --num_images <Number of images shown in grid> -l <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler>
+```
+
++ From trained Cold Diffusion models:
+```
+python generate_images_cold_diffusion.py --num_images <Number of images shown in grid> --labels <OConditional input i.e class labels, ignore if none> --device <Device model will run on> --cold_step_size <Steps to be skipped> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler>
+```
+
++ From trained Doodle Diffusion models:
+```
+python generate_images_diffusion.py --num_images <Number of images shown in grid> --labels <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler> --cond_img_path <File path to conditional image e.g Doodle image.>
+```
+
++ From trained Super-Resolution models:
+```
+python generate_sr_images_diffusion.py --device <Device model will run on> --config "<File Path to model config file>" --seed <Optional seed value for same output> --dest_path <Optional path to save generated image> --cold_step_size <Steps to be skipped> --labels <Conditional input i.e class labels, ignore if none> --lr_img_path <File path to Low resoluion image that is to be upsampled> --max_T <Model's parameter value for noise scheduler>
+```
+
 ## Trained Model Weights
-The following are the checkpoints for trained models:
-* Anime_Portraits folder: Includes multiple base ensemble models(*.pt files) and Super-Resolution model(diffusion_SR_1000-1:128-256.pt) with json files for each. 
-* Celebrity_Faces folder: Includes one base model(diffusion_1000-1:128.pt) and a json file for model config.
-* My_Body_Poses: Includes one base model(diffusion_1000-1:128.pt) and one Super Resolution model(diffusion_SR:128-256.pt) and respective json files for model configs.
-* My_Face: Includes one base model(diffusion_1000-1:128.pt) and one Super Resolution model(diffusion_SR:128-256.pt) and respective json files for model configs.
+
 
 ## Examples of generated outputs
 ### Anime_Portraits
