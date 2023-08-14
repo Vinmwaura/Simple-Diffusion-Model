@@ -21,7 +21,11 @@ from utils.utils import (
 from diffusion_sampling_algorithms import cold_diffusion_sampling
 
 
-def generate_images_cold_diffusion(raw_args=None, log=print, save_locally=True):
+def generate_images_cold_diffusion(
+        raw_args=None,
+        log=print,
+        save_locally=True):
+
     parser = argparse.ArgumentParser(
         description="Generate Images using Cold Diffusion models.")
     
@@ -33,16 +37,17 @@ def generate_images_cold_diffusion(raw_args=None, log=print, save_locally=True):
         type=str,
         default="cpu")
     parser.add_argument(
+        "-c",
+        "--config",
+        help="File path to load config file.",
+        required=True,
+        type=pathlib.Path)
+    parser.add_argument(
+        "-s",
         "--seed",
         help="Seed value for generating image(default: None).",
         type=int,
         default=None)
-    parser.add_argument(
-        "-m",
-        "--model_path",
-        help="File path to load models json file.",
-        required=True,
-        type=pathlib.Path)
     parser.add_argument(
         "-T",
         "--max_T",
@@ -75,17 +80,6 @@ def generate_images_cold_diffusion(raw_args=None, log=print, save_locally=True):
 
     args = vars(parser.parse_args(raw_args))
 
-    # Check if json containing model details exists.
-    if not os.path.isfile(args["model_path"]):
-        raise FileNotFoundError("Invalid path for json file containing models, kindly correct and try again!")
-
-    # Loads model details from json file.
-    with open(args["model_path"]) as f:
-        models_details = json.load(f)
-
-    if len(models_details["models"]) == 0:
-        raise ValueError("Invalid/no model details in json, kindly correct and try again!")
-
     # Seed value for generating images.
     if args["seed"] is not None:
         torch.manual_seed(args["seed"])
@@ -106,16 +100,26 @@ def generate_images_cold_diffusion(raw_args=None, log=print, save_locally=True):
     if args["cold_step_size"] < 0 or args["cold_step_size"] >  args["max_T"]:
         raise ValueError("Invalid step size for Cold Diffusion!")
 
+    # Loads model details from json file.
+    with open(args["config"], "r") as f:
+        models_details = json.load(f)
+
+    if not "models" in models_details or len(models_details["models"]) == 0:
+        raise ValueError(
+            "Invalid / No model details in json, kindly correct and try again!")
+    
+    config_folder_path, _ = os.path.split(args["config"])
+
     noise = None
     for model_dict in models_details["models"]:
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-        if model_dict["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
+        if model_dict["noise_scheduler"] == NoiseScheduler.LINEAR.name:
             noise_degradation = NoiseDegradation(
                 model_dict["beta_1"],
                 model_dict["beta_T"],
                 args["max_T"],
                 args["device"])
-        elif model_dict["noise_alg"] == NoiseScheduler.COSINE.name.lower():
+        elif model_dict["noise_scheduler"] == NoiseScheduler.COSINE.name:
             noise_degradation = CosineNoiseDegradation(args["max_T"])
 
         if noise is None:
@@ -158,10 +162,16 @@ def generate_images_cold_diffusion(raw_args=None, log=print, save_locally=True):
             image_recon=model_dict["image_recon"],
         ).to(args["device"])
 
+        model_path = os.path.join(
+            config_folder_path,
+            model_dict["model_name"]
+        )
+
         # Load Diffusion Checkpoints.
-        if not os.path.isfile(model_dict["model_path"]):
-            raise FileNotFoundError("Invalid path for model in json file, kindly correct and try again!")
-        load_status, diffusion_checkpoint = load_checkpoint(model_dict["model_path"])
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(
+                "Invalid path for model in json file, kindly correct and try again!")
+        load_status, diffusion_checkpoint = load_checkpoint(model_path)
         if not load_status:
             raise Exception("Failed to load model!")
 

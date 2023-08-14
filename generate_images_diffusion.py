@@ -32,7 +32,12 @@ SUPPORTED_IMG_FORMATS = [
     "jpg",
     "png"]
 
-def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_locally=True):
+def generate_images_diffusion(
+        raw_args=None,
+        log=print,
+        cond_img=None,
+        save_locally=True):
+
     parser = argparse.ArgumentParser(
         description="Generate Images using Diffusion models.")
     
@@ -44,9 +49,9 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
         type=str,
         default="cpu")
     parser.add_argument(
-        "-m",
-        "--model_path",
-        help="File path to load models json file.",
+        "-c",
+        "--config",
+        help="File path to config file.",
         required=True,
         type=pathlib.Path)
     parser.add_argument(
@@ -77,14 +82,9 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
         default=10,
         type=int)
     parser.add_argument(
-        "--cond_t",
-        help="Timestep for conditional augmentation(Super Resolution).",
-        default=250,
-        type=int)
-    parser.add_argument(
         "-T",
         "--max_T",
-        help="Max T value for noise scheduling(In cases of Ensemble methods).",
+        help="Max T value for noise scheduling (In cases of Ensemble methods).",
         default=1_000,
         type=int)
     parser.add_argument(
@@ -99,19 +99,8 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
         help="Conditional Labels.",
         type=float,
         default=None)
-    
+
     args = vars(parser.parse_args(raw_args))
-
-    # Check if json containing model details exists.
-    if not os.path.isfile(args["model_path"]):
-        raise FileNotFoundError("Invalid path for json file containing models, kindly correct and try again!")
-
-    # Loads model details from json file.
-    with open(args["model_path"]) as f:
-        models_details = json.load(f)
-
-    if len(models_details["models"]) == 0:
-        raise ValueError("Invalid/no model details in json, kindly correct and try again!")
 
     # Seed value for generating images.
     if args["seed"] is not None:
@@ -126,7 +115,8 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
         out_dir = "./"
     else:
         if not args["dest_path"].exists():
-            raise ValueError("Invalid destination path, kindly correct and ensure it exists!")
+            raise ValueError(
+                "Invalid destination path, kindly correct and ensure it exists!")
         out_dir = str(args["dest_path"])
     
     # Check if valid DDIM sampling size where DDIM sampling is used.
@@ -138,7 +128,8 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
     if cond_img_path is not None:
         # Check if conditional img file exists.
         if not os.path.isfile(cond_img_path):
-            raise FileNotFoundError("Invalid path for conditional image, kindly correct and try again!")
+            raise FileNotFoundError(
+                "Invalid path for conditional image, kindly correct and try again!")
         if not imghdr.what(cond_img_path) in SUPPORTED_IMG_FORMATS:
             raise ValueError("Image format is not supported!")
         
@@ -158,12 +149,22 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
         cond_img = cond_img.permute(2, 0, 1)
         cond_img = cond_img.unsqueeze(0).repeat(args["num_images"], 1, 1, 1)
 
+    # Loads model details from json file.
+    with open(args["config"], "r") as f:
+        models_details = json.load(f)
+
+    if not "models" in models_details or len(models_details["models"]) == 0:
+        raise ValueError(
+            "Invalid/no model details in json, kindly correct and try again!")
+    
+    config_folder_path, _ = os.path.split(args["config"])
+
     # Low-Resolution Diffusion (Cascaded / Ensemble Models).
     noise = None
     for model_dict in models_details["models"]:
         """
-        Inititalize noise and x_T at the begining but use generated x_t as input for other models 
-        in cases of ensemble models.
+        Inititalize noise and x_T at the begining but use generated x_t as input
+        for other models in cases of ensemble models.
         """
         if noise is None:
             # X_T ~ N(0, I).
@@ -178,19 +179,19 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
 
         if model_dict["cond_dim"] is not None:
             if args["labels"] is None or len(args["labels"]) != model_dict["cond_dim"]:
-                raise ValueError("Invalid/No conditional labels passed!")
+                raise ValueError("Invalid / No conditional labels passed!")
             labels_tensor = torch.tensor(args["labels"]).float().to(args["device"])
         else:
             labels_tensor = None
 
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-        if model_dict["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
+        if model_dict["noise_scheduler"] == NoiseScheduler.LINEAR.name:
             noise_degradation = NoiseDegradation(
                 model_dict["beta_1"],
                 model_dict["beta_T"],
                 args["max_T"],
                 args["device"])
-        elif model_dict["noise_alg"] == NoiseScheduler.COSINE.name.lower():
+        elif model_dict["noise_scheduler"] == NoiseScheduler.COSINE.name:
             noise_degradation = CosineNoiseDegradation(args["max_T"])
 
         # Diffusion Model.
@@ -209,16 +210,23 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
             image_recon=model_dict["image_recon"],
         ).to(args["device"])
 
+        # Model path, assumed to be in same directory as config.
+        model_path = os.path.join(
+            config_folder_path,
+            model_dict["model_name"]
+        )
+
         # Load Diffusion Checkpoints.
-        if not os.path.isfile(model_dict["model_path"]):
-            raise FileNotFoundError("Invalid path for model in json file, kindly correct and try again!")
-        load_status, diffusion_checkpoint = load_checkpoint(model_dict["model_path"])
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(
+                "Invalid path for model in json file, kindly correct and try again!")
+        load_status, diffusion_checkpoint = load_checkpoint(model_path)
         if not load_status:
             raise Exception("Failed to load model!")
 
         diffusion_net.load_state_dict(diffusion_checkpoint["model"])
 
-        sampling_alg = args["diff_alg"]
+        sampling_alg = args["diff_alg"].lower()
         if sampling_alg == DiffusionAlg.DDPM.name.lower():
             x_t = ddpm_sampling(
                 diffusion_net=diffusion_net,
@@ -243,7 +251,7 @@ def generate_images_diffusion(raw_args=None, log=print, cond_img=None, save_loca
                 device=args["device"],
                 log=log)
         else:
-            raise ValueError("Invalid Diffusion Algorigm type.")
+            raise ValueError("Invalid Diffusion Algorithm type.")
 
     if save_locally:
         # Save Image from Base Diffusion.

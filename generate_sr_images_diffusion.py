@@ -29,9 +29,14 @@ SUPPORTED_IMG_FORMATS = [
     "jpg",
     "png"]
 
-def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_locally=True):
+def generate_sr_images_diffusion(
+        raw_args=None,
+        lr_img=None,
+        log=print,
+        save_locally=True):
+
     parser = argparse.ArgumentParser(
-        description="Generate Images using Cascaded Diffusion models.")
+        description="Generate Super Resolution Images.")
     
     parser.add_argument(
         "--device",
@@ -40,11 +45,17 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
         type=str,
         default="cpu")
     parser.add_argument(
-        "-m",
-        "--model_path",
-        help="File path to load models json file.",
+        "-c",
+        "--config",
+        help="File path to load config file.",
         required=True,
         type=pathlib.Path)
+    parser.add_argument(
+        "-s",
+        "--seed",
+        help="Seed value for generating image(default: None).",
+        type=int,
+        default=None)
     parser.add_argument(
         "-d",
         "--dest_path",
@@ -54,11 +65,6 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
         "--cold_step_size",
         help="Number of steps to skip when using cold diffusion.",
         default=10,
-        type=int)
-    parser.add_argument(
-        "--cond_t",
-        help="Timestep for conditional augmentation(Super Resolution).",
-        default=250,
         type=int)
     parser.add_argument(
         "-l",
@@ -81,16 +87,9 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
 
     args = vars(parser.parse_args(raw_args))
 
-    # Check if json containing model details exists.
-    if not os.path.isfile(args["model_path"]):
-        raise FileNotFoundError("Invalid path for json file containing models, kindly correct and try again!")
-
-    # Loads model details from json file.
-    with open(args["model_path"]) as f:
-        models_details = json.load(f)
-
-    if len(models_details["models"]) == 0:
-        raise ValueError("Invalid/no model details in json, kindly correct and try again!")
+    # Seed value for generating images.
+    if args["seed"] is not None:
+        torch.manual_seed(args["seed"])
 
     # Path to store generated images, defaults to same directory.
     if args["dest_path"] is None:
@@ -126,19 +125,28 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
     lr_img = lr_img.unsqueeze(0)
     lr_img = lr_img.to(args["device"])
 
+    # Loads model details from json file.
+    with open(args["config"], "r") as f:
+        models_details = json.load(f)
+
+    if not "models" in models_details or len(models_details["models"]) == 0:
+        raise ValueError("Invalid / No model details in json, kindly correct and try again!")
+    
+    config_folder_path, _ = os.path.split(args["config"])
+
     """
     Super-Res Upsampler (Uses Cold-Diffusion implementation).
     """
     noise = None
     for model_dict in models_details["models"]:
         # x_t(X_0, eps) = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps.
-        if model_dict["noise_alg"] == NoiseScheduler.LINEAR.name.lower():
+        if model_dict["noise_scheduler"].lower() == NoiseScheduler.LINEAR.name.lower():
             noise_degradation = NoiseDegradation(
                 model_dict["beta_1"],
                 model_dict["beta_T"],
                 args["max_T"],
                 args["device"])
-        elif model_dict["noise_alg"] == NoiseScheduler.COSINE.name.lower():
+        elif model_dict["noise_scheduler"].lower() == NoiseScheduler.COSINE.name.lower():
             noise_degradation = CosineNoiseDegradation(args["max_T"])
 
         if noise is None:
@@ -153,11 +161,11 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
             noise = torch.randn(img_shape, device=args["device"])
             x_t = 1 * noise
 
-            # Ensure dimension for upsampling is more than previous
-            # image generated.
+            # Ensure dimension for upsampling is more than previous image generated.
             _, _, H_lr, W_lr = lr_img.shape
             if img_H < H_lr or img_W < W_lr:
-                raise ValueError("Invalid shapes for High Resolution and Low Resolution images.")
+                raise ValueError(
+                    "Invalid shapes for High Resolution and Low Resolution images.")
 
             x0_approx_upsample = F.interpolate(
                 lr_img,
@@ -166,7 +174,7 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
             
             x_t_cond_input = noise_degradation(
                 img=x0_approx_upsample,
-                steps=torch.tensor([args["cond_t"]], device=args["device"]),
+                steps=torch.tensor([model_dict["cond_t"]], device=args["device"]),
                 eps=noise)
         else:
             # For Ensemble models.
@@ -198,10 +206,16 @@ def generate_sr_images_diffusion(raw_args=None, lr_img=None, log=print, save_loc
             image_recon=model_dict["image_recon"],
         ).to(args["device"])
 
+        model_path = os.path.join(
+            config_folder_path,
+            model_dict["model_name"]
+        )
+
         # Load Diffusion Checkpoints.
-        if not os.path.isfile(model_dict["model_path"]):
-            raise FileNotFoundError("Invalid path for model in json file, kindly correct and try again!")
-        load_status, diffusion_checkpoint = load_checkpoint(model_dict["model_path"])
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(
+                "Invalid path for model in json file, kindly correct and try again!")
+        load_status, diffusion_checkpoint = load_checkpoint(model_path)
         if not load_status:
             raise Exception("Failed to load model!")
 
