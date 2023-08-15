@@ -130,22 +130,22 @@ python export_models.py
 To generate an image from a model, run one of the following commands in a terminal:
 + From trained Base Diffusion (DDPM / DDIM) models:
 ```
-python generate_images_diffusion.py --num_images <Number of images shown in grid> -l <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler>
+python generate_images_diffusion.py --num_images <Number of images shown in grid> -l <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler>
 ```
 
 + From trained Cold Diffusion models:
 ```
-python generate_images_cold_diffusion.py --num_images <Number of images shown in grid> --labels <OConditional input i.e class labels, ignore if none> --device <Device model will run on> --cold_step_size <Steps to be skipped> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler>
+python generate_images_cold_diffusion.py --num_images <Number of images shown in grid> --labels <OConditional input i.e class labels, ignore if none> --device <Device model will run on> --cold_step_size <Steps to be skipped> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler>
 ```
 
 + From trained Doodle Diffusion models:
 ```
-python generate_images_diffusion.py --num_images <Number of images shown in grid> --labels <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Model's parameter value for noise scheduler> --cond_img_path <File path to conditional image e.g Doodle image.>
+python generate_images_diffusion.py --num_images <Number of images shown in grid> --labels <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler> --cond_img_path <File path to conditional image e.g Doodle image.>
 ```
 
 + From trained Super-Resolution models:
 ```
-python generate_sr_images_diffusion.py --device <Device model will run on> --config "<File Path to model config file>" --seed <Optional seed value for same output> --dest_path <Optional path to save generated image> --cold_step_size <Steps to be skipped> --labels <Conditional input i.e class labels, ignore if none> --lr_img_path <File path to Low resoluion image that is to be upsampled> --max_T <Model's parameter value for noise scheduler>
+python generate_sr_images_diffusion.py --device <Device model will run on> --config "<File Path to model config file>" --seed <Optional seed value for same output> --dest_path <Optional path to save generated image> --cold_step_size <Steps to be skipped> --labels <Conditional input i.e class labels, ignore if none> --lr_img_path <File path to Low resoluion image that is to be upsampled> --max_T <Optional Model's parameter value for noise scheduler>
 ```
 
 ## Trained Model Weights
