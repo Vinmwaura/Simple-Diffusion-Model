@@ -2,6 +2,8 @@
 
 This repository contains a simple implementation of Diffusion generative models, implemented using Pytorch, which is a machine learning algorithm predominately used in the generation of images from noise.
 
+**NOTE**: Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models. Some liberty was used as this was a side project.
+
 ## What is Diffusion Model (Simplified)
 These are machine learning models that are trained to be able to generate data, usually images, by systematically and slowly destroying the structure in the data distribution through an iterative **forward diffusion process** i.e Gaussian Noise is slowly added to the data in incremental steps until the degraded data is approximately equivalent to the Gaussian Noise being added. In each step the model is trained to learn a **reverse diffusion process** that restores the structure in the data.
 
@@ -179,8 +181,6 @@ You can find some trained models [here](https://huggingface.co/VinML/Custom-Simp
 ### MyFace
 
 ![MyFace](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/6f0b85a6-9d23-4592-9ccc-8e3de8d5fbf1)
-
-**NOTE**: Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models.
 
 ## Learning Resources Used to understand and implement Diffusion Models
 + Anime Portraits Dataset -> https://gwern.net/crop#danbooru2019-portraits
