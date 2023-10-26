@@ -2,6 +2,7 @@
 
 This repository is an attempt at a simple implementation of Diffusion Generative models which is a machine learning algorithm predominately used in the generation of images from noise. This was made to try and understand the technology.
 
+
 **NOTE**: Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models. Some liberty was used as this was a side project.
 
 ## What is Diffusion Model (Simplified)
