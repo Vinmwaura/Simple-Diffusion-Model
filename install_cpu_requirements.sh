@@ -2,4 +2,4 @@
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Other libraries.
-pip install -r model_requirements.txt
+pip install -r requirements.txt
