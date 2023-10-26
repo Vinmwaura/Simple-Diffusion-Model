@@ -1,86 +1,166 @@
 # Simple-Diffusion-Model
 
-This repository is an attempt at a simple implementation of Diffusion Generative models which is a machine learning algorithm predominately used in the generation of images from noise. This was made in a bid to personally try and understand the technology.
+This repository is an attempt at a simple implementation of Diffusion Generative models which is a machine learning algorithm predominately used in the generation of images from noise. This was made to try and understand the technology.
 
-The project was written in PyTorch and some liberty has been taken in the implementation of the various types of models and their parameters and so it may not match the original implementation from their respective papers.
+**NOTE**: Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models. Some liberty was used as this was a side project.
 
 ## What is Diffusion Model (Simplified)
 These are machine learning models that are trained to be able to generate data, usually images, by systematically and slowly destroying the structure in the data distribution through an iterative **forward diffusion process** i.e Gaussian Noise is slowly added to the data in incremental steps until the degraded data is approximately equivalent to the Gaussian Noise being added. In each step the model is trained to learn a **reverse diffusion process** that restores the structure in the data.
 
 This works due to the fact that the model learns to gradually convert one distribution i.e a normal distribution: $$X \sim \mathcal{N}(0,I)$$, which is simple and easy to model using artificial neural networks into the target distribution which is usually complex and hard to model e.g picture of cats over a series of steps where each step is only dependant on the prior one excluding the initial step.
 
-Once a model has been trained, to generate data from it one has to start by sampling from noise e.g Gaussian distribution and over a series of steps (Reverse Diffusion) the target distribution e.g images of a cat is slowly restored from the noise.
+Generating data from a trained model begins by sampling from noise e.g Gaussian distribution and over a series of steps (Reverse Diffusion) the target distribution e.g images of a cat is slowly restored.
 
 ![Depiction of Forward Diffusion Process and Reverse Diffusion Process](./assets/Forward_Reverse_Diffusion_Process.png)
 *Figure 1: Image showcasing Forward Diffusion Process of an image of a cat slowly being degraded into noise and Reverse Diffusion Process of noise being converted back to an image of a cat. From Denoising Diffusion-based Generative Modeling: Foundations and Applications, by Karsten Kreis, Ruiqi Gao, Arash Vahdat. Retrieved from https://cvpr2022-tutorial-diffusion-models.github.io*
 
 ## Implementation
-The various techniques to add noise to the data distribution and which have been implemented in the code include the following:
+The various techniques to add noise to the data distribution include, but are not limited to, the following:
+
 ### Linear Noise Scheduler
-This is used to control the noise added to the data in each step using two parameters beta<sub>1</sub> and beta<sub>T</sub> which is set before training. The two parameters determine the rate at which noise is added to the data at each timestep where at the initial step T the value will be close to 1 and at the final step t<sub>1</sub> e.g 1, the value is closer to 0.
+Here two parameters beta<sub>1</sub> and beta<sub>T</sub> are used to determine the rate at which noise is added to the data at each timestep. For the initial step T the value will be close to 1 and at the final step t<sub>1</sub>, the value is closer to 0.
 
 ### Cosine Noise Scheduler
-This is supposed to be an improvement of the Linear Noise Scheduler that has been tested to improve the quality of images in some papers. It only requires the final step T as a parameter.
+This was designed as an improvement to the Linear Noise Scheduler, it was shown to improve the quality of images in some papers. It only requires the final step T as a parameter.
 
 ![Linear and Cosine scheduler comparison](./assets/noise_scheduling_steps.png)
 *Figure 2: Graph comparison of Linear and Cosine Scheduler. From Improved Denoising Diffusion Probabilistic Models, by Nichol & Dhariwal, 2021. Retrieved from https://arxiv.org/abs/2102.09672*
 
-**NOTE**:
-In my implementation i’ve used Linear noise scheduler with beta<sub>1</sub> of **5e-3** and beta<sub>T</sub> of **9e-3** for DDPM and DDIM and Cosine noise scheduler for Cold Diffusion model, described below. Some experimentation with the values is needed to determine the optimal parameters for better model results.
-
-In addition to the noise scheduler the techniques used to restore the data distribution from Gaussian Noise include the following:
+The various techniques to restore the data distribution from Gaussian Noise include the following:
 
 ### Denoising Diffusion Probabilistic Model (DDPM)
-Here the data is systematically restored slowly from noise step by step by having the model attempt to predict the noise that was added to the data from the initial step, T. The predicted noise value, denoted as \epsilon and the current degraded data denoted as x<sub>t</sub> where t is the current step, is then used to predict the next step’s degraded data denoted as x<sub>t-1</sub>. This is repeated until the final step of t<sub>1</sub> is computed to get back the data.
+Here the data is systematically restored slowly from noise step by step by having the model attempt to predict the noise that was added to the data from the initial step, T. The predicted noise value, denoted as \epsilon and the current degraded data denoted as x<sub>t</sub> where t is the current step, is then used to predict the next step’s degraded data denoted as x<sub>t-1</sub>. This is repeated until the final step of t<sub>1</sub> is computed to get back the data denoted as x<sub>0</sub>.
 
 ![Depiction of DDPM](./assets/DDPM_diagram.png)
 *Figure 3: Representation of the multiple steps in a DDPM (Markov chain) of forward diffusion process and reverse diffusion process. From Denoising Diffusion Probabilistic Models, by Ho et al. 2020. Retrieved from https://arxiv.org/abs/2006.11239*
 
 ### Denoising Diffusion Implicit Model (DDIM)
-This technique is similar to DDPM in that the model tries to predict the noise added to the image at each step, however this technique attempts to speed up the process by using x<sub>t</sub> and noise approximated by the model and computes the data as it would appear in the final step. Then, some steps will be skipped and the predicted data will have noise re-added to it for the next step and the process is repeated until the final step is reached. This makes it the faster option however with an increase in skipped steps, data quality may go down.
+This technique is similar to DDPM in that the model tries to predict the noise added to the image at each step, however this technique attempts to speed up the process by using x<sub>t</sub> and noise approximated by the model and computes the data as it would appear in the final step. Then, some steps will be skipped and the predicted data will have noise re-added to it for the next step. This process is repeated until the final step t<sub>1</sub> is reached. Skipping multiple steps makes this the faster option. However with an increase in skipped steps, data quality goes down.
 
 ![Depiction of DDIM](./assets/DDIM_diagram.jpg)
 
 *Figure 4: Representation of the skipped steps in a DDIM (Markov chain) of forward diffusion process and reverse diffusion process. From Denoising Diffusion Implicit Models, by Song et al. 2022. Retrieved from https://arxiv.org/abs/2010.02502*
 
 ### Cold Diffusion
-In this approach the model directly attempts to predict the data as it would appear in the final step from the noise at each step, some steps can be skipped similar to DDIM but the noise has to be added using a separate formula.
+In this approach the model directly attempts to reconstruct the data (x<sub>0</sub>) at each step from the degraded image x<sub>t</sub>, where some steps can be skipped similar to DDIM.
 
-Combining all of the above implementations, the model(s) can be trained in various configurations in a bid to improve image quality, and image size. These include but are not limited to:
+Combining all of the above techniques, the model(s) can be trained in various configurations to improve image quality, and image size. These include but are not limited to:
 ### Cascaded Diffusion Models for High Fidelity Image Generation
-This comprises a pipeline of multiple diffusion models that generate images of increasing resolution, beginning with a standard diffusion model at the lowest resolution, followed by one or more super-resolution diffusion models that successively upsample the image and add higher details.
-
-In this project the base resolution has been trained on images with dimensions of 128\*128\*3 and only one super-resolution was used for upscaling to 256\*256\*3.
+This comprises a pipeline of multiple diffusion models that generate images of increasing resolution, beginning with a standard diffusion model (Base model) at the lowest resolution, followed by one or more Super-Resolution diffusion models that successively upsamples the image.
 
 ![Example of cascaded diffusion models with a photo of a dog](./assets/Cascading_upsampling_example.png)
 *Figure 5: A cascaded pipeline of multiple diffusion models at increasing resoltions. From Cascaded Diffusion Models for High Fidelity Image Generation, by Ho et al. 2022. Retrieved from https://arxiv.org/abs/2106.15282*
 
 ### eDiffi: Text-to-Image Diffusion Models with an Ensemble of Expert Denoisers
-This comprises an ensemble of diffusion models i.e multiple models, specialized for different synthesis stages. Multiple models are trained on one dataset but each model is only trained on a specific range of steps so it becomes specialized in that range. This can improve data quality as the capacity of the diffusion models is increased. Sampling from these models require loading the models one after the other for their respective step ranges.
-
-In this project only one dataset was trained using this approach but code supports training using this approach.
+This comprises an ensemble of diffusion models i.e multiple models, specialized for different synthesis stages. Multiple models are trained on one dataset but each model is only trained on a specific range of steps so it becomes specialized in that range only. This can improve data quality as the capacity of each diffusion model is increased due to only focussing on a smaller range of degraded images. Sampling from these models requires loading the models one after the other for their respective range.
 
 ![Depiction of ensemble of models generating an image](./assets/Ensemble_Example_diagram.jpg)
 *Figure 6: An ensemble of diffusion models that are specialized for denoising at different intervals of the generative process. From eDiff-I: Text-to-Image Diffusion Models with an Ensemble of Expert Denoisers, by Balaji et al. 2023. Retrieved from https://arxiv.org/pdf/2211.01324.pdf*
 
 ## Requirements
-To be able to run the code you require [anaconda](https://conda.io/) on your machine and create an environment and install dependencies from requirements.txt file by running the following commands:
++ Python 3
++ [Optional] [Cuda-enabled GPU](https://developer.nvidia.com/cuda-gpus) or equivalent supported hardware.
+
+## Set-Up
+1. Install [virtualenvwrapper](https://virtualenvwrapper.readthedocs.io/en/latest/install.html).
+2. Create a virtual enviroment:
 ```
-conda create --name diffusion_env --file requirements.txt
+mkvirtualenv diffusion_env
 ```
-To activate this conda environment:
+3. To activate virtualenv:
 ```
-conda activate diffusion_env
+workon diffusion_env
+```
+4. To install the libraries needed by the project (Pytorch + Others) run the following script (This installs the CPU-only Pytorch libraries, which is lighter and runs on most machine):
+```
+sudo chmod +x install_cpu_requirements.sh
+sh install_cpu_requirements.sh
+```
+[Optional] (Ignore Step 4) If you want to run and/or train using this project with the benefit of speed (hardware acceleration), you will require to install the appropriate [Pytorch](https://pytorch.org/) library and it's dependencies specific to you machine then you can install the additional python libraries needed by the project:
+```
+pip install -r requirements.txt
 ```
 
+**NOTE**: The code was tested and run on Ubuntu 22.04.3 LTS, which was running on a CUDA-enabled GPU with additional libraries not shown above.
+
 ## Training Models
+1. Create a training config file by executing the following command and follow the prompts:
++ For Base Diffusion (DDPM / DDIM) and Cold Diffusion Models:
+```
+python create_diffusion_config.py
+```
+
++ For Super-Resolution Diffusion Models:
+```
+python create_sr_diffusion_config.py
+```
+
++ For Base Diffusion (DDPM / DDIM) using images e.g doodles as conditional input:
+```
+python create_doodle_diffusion_config.py
+```
+
+2. To train a model, use the config files created above and run the folowing commands:
++ For Base Diffusion (DDPM / DDIM) models:
+```
+python train_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
++ For Cold Diffusion models:
+```
+python train_noise_cold_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
++ For Base Diffusion (DDPM / DDIM) models using images e.g doodles as conditional input:
+```
+python train_doodle_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
++ For Super-Resolution Diffusion models (Uses Cold-Diffusion algorithm):
+```
+python train_SR_diffusion.py --config-path "<File path to training config file>" --device <Device model will use>
+```
+
 ## Generating Images
+The scripts requires there to be **folder** with **model checkpoint** file and a **json config** file to work.
+
+To generate the above mentioned folder and respective files, run the following command in the terminal and follow the prompts (Requires a trained model checkpoint file and training config file):
+```
+python export_models.py
+```
+
+To generate an image from a model, run one of the following commands in a terminal:
++ From trained Base Diffusion (DDPM / DDIM) models:
+```
+python generate_images_diffusion.py --num_images <Number of images shown in grid> -l <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler>
+```
+
++ From trained Cold Diffusion models:
+```
+python generate_images_cold_diffusion.py --num_images <Number of images shown in grid> --labels <OConditional input i.e class labels, ignore if none> --device <Device model will run on> --cold_step_size <Steps to be skipped> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler>
+```
+
++ From trained Doodle Diffusion models:
+```
+python generate_images_diffusion.py --num_images <Number of images shown in grid> --labels <Conditional input i.e class labels, ignore if none> --device <Device model will run on> --diff_alg <DDPM/DDIM algorithm to use> --ddim_step_size <Steps skipped if using DDIM> --seed <Optional seed value for same output> --config "<File Path to model config file>" --dest_path <Optional path to save generated image> --max_T <Optional Model's parameter value for noise scheduler> --cond_img_path <File path to conditional image e.g Doodle image.>
+```
+
++ From trained Super-Resolution models:
+```
+python generate_sr_images_diffusion.py --device <Device model will run on> --config "<File Path to model config file>" --seed <Optional seed value for same output> --dest_path <Optional path to save generated image> --cold_step_size <Steps to be skipped> --labels <Conditional input i.e class labels, ignore if none> --lr_img_path <File path to Low resoluion image that is to be upsampled> --max_T <Optional Model's parameter value for noise scheduler>
+```
+
 ## Trained Model Weights
-The following are the checkpoints for trained models:
-* Anime_Portraits folder: Includes multiple base ensemble models(*.pt files) and Super-Resolution model(diffusion_SR_1000-1:128-256.pt) with json files for each. 
-* Celebrity_Faces folder: Includes one base model(diffusion_1000-1:128.pt) and a json file for model config.
-* My_Body_Poses: Includes one base model(diffusion_1000-1:128.pt) and one Super Resolution model(diffusion_SR:128-256.pt) and respective json files for model configs.
-* My_Face: Includes one base model(diffusion_1000-1:128.pt) and one Super Resolution model(diffusion_SR:128-256.pt) and respective json files for model configs.
+You can find some trained models [here](https://huggingface.co/VinML/Custom-Simple-Diffusion-Model), they include the following files:
++ AnimePortraits
++ AnimePortraits_SR
++ CelebFaces
++ MyBodyPose
++ MyBodyPose_SR
++ MyFace
++ MyFace_SR
+
+**NOTE**: In this project the base resolution models (AnimePortraits, CelebFaces, MyBodyPose, MyFace) was trained on images with dimensions of 128\*128\*3 and the super-resolution models (AnimePortraits_SR, MyBodyPose_SR, MyFace_SR) upsamples the respective base resolution images to 256\*256\*3.
 
 ## Examples of generated outputs
 ### Anime_Portraits
@@ -89,8 +169,8 @@ The following are the checkpoints for trained models:
 ### Celebrity_Faces
 ![Celeb_Faces](./assets/Celebrities_output_example.jpg)
 
-### My_Body_Poses
-**Input (Conditional input displayed as a grid)**:
+### MyBodyPose
+**Input** (Conditional input displayed as a grid):
 
 ![MyBodyPose_input](./assets/Stickman_Conditional_Input.jpg)
 
@@ -98,16 +178,14 @@ The following are the checkpoints for trained models:
 
 ![MyBodyPose_output](./assets/Me_Body_Pose_output_example.jpg)
 
-### My_Face
+### MyFace
 
 ![MyFace](./assets/Me_Face_example.jpg)
-
-**NOTE**
-Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models.
 
 ## Learning Resources Used to understand and implement Diffusion Models
 + Anime Portraits Dataset -> https://gwern.net/crop#danbooru2019-portraits
 + Celebrity Faces Dataset -> http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
++ Attention mechanism -> https://arxiv.org/abs/1706.03762
 + Deep Unsupervised Learning using Nonequilibrium Thermodynamics -> https://arxiv.org/abs/1503.03585
 + Denoising Diffusion Probabilistic Models -> https://arxiv.org/abs/2006.11239
 + Denoising Diffusion Implicit Models -> https://arxiv.org/abs/2010.02502
