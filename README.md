@@ -1,6 +1,6 @@
 # Simple-Diffusion-Model
 
-This repository contains a simple implementation of Diffusion Generative models which is a machine learning algorithm predominately used in the generation of images from noise.
+This repository is an attempt at a simple implementation of Diffusion Generative models which is a machine learning algorithm predominately used in the generation of images from noise. This was made in a bid to personally try and understand the technology.
 
 The project was written in PyTorch and some liberty has been taken in the implementation of the various types of models and their parameters and so it may not match the original implementation from their respective papers.
 
@@ -11,7 +11,7 @@ This works due to the fact that the model learns to gradually convert one distri
 
 Once a model has been trained, to generate data from it one has to start by sampling from noise e.g Gaussian distribution and over a series of steps (Reverse Diffusion) the target distribution e.g images of a cat is slowly restored from the noise.
 
-![Depiction of Forward Diffusion Process and Reverse Diffusion Process](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/f172f38b-34b6-4383-ace9-3c642bf879f6)
+![Depiction of Forward Diffusion Process and Reverse Diffusion Process](./assets/Forward_Reverse_Diffusion_Process.png)
 *Figure 1: Image showcasing Forward Diffusion Process of an image of a cat slowly being degraded into noise and Reverse Diffusion Process of noise being converted back to an image of a cat. From Denoising Diffusion-based Generative Modeling: Foundations and Applications, by Karsten Kreis, Ruiqi Gao, Arash Vahdat. Retrieved from https://cvpr2022-tutorial-diffusion-models.github.io*
 
 ## Implementation
@@ -22,7 +22,7 @@ This is used to control the noise added to the data in each step using two param
 ### Cosine Noise Scheduler
 This is supposed to be an improvement of the Linear Noise Scheduler that has been tested to improve the quality of images in some papers. It only requires the final step T as a parameter.
 
-![Linear and Cosine scheduler comparison](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/580b2009-dad0-4652-9bba-588f0733a77c)
+![Linear and Cosine scheduler comparison](./assets/noise_scheduling_steps.png)
 *Figure 2: Graph comparison of Linear and Cosine Scheduler. From Improved Denoising Diffusion Probabilistic Models, by Nichol & Dhariwal, 2021. Retrieved from https://arxiv.org/abs/2102.09672*
 
 **NOTE**:
@@ -33,13 +33,13 @@ In addition to the noise scheduler the techniques used to restore the data distr
 ### Denoising Diffusion Probabilistic Model (DDPM)
 Here the data is systematically restored slowly from noise step by step by having the model attempt to predict the noise that was added to the data from the initial step, T. The predicted noise value, denoted as \epsilon and the current degraded data denoted as x<sub>t</sub> where t is the current step, is then used to predict the next step’s degraded data denoted as x<sub>t-1</sub>. This is repeated until the final step of t<sub>1</sub> is computed to get back the data.
 
-![Depiction of DDPM](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/7c405b83-31b0-4e34-8c46-04f0f461085e)
+![Depiction of DDPM](./assets/DDPM_diagram.png)
 *Figure 3: Representation of the multiple steps in a DDPM (Markov chain) of forward diffusion process and reverse diffusion process. From Denoising Diffusion Probabilistic Models, by Ho et al. 2020. Retrieved from https://arxiv.org/abs/2006.11239*
 
 ### Denoising Diffusion Implicit Model (DDIM)
 This technique is similar to DDPM in that the model tries to predict the noise added to the image at each step, however this technique attempts to speed up the process by using x<sub>t</sub> and noise approximated by the model and computes the data as it would appear in the final step. Then, some steps will be skipped and the predicted data will have noise re-added to it for the next step and the process is repeated until the final step is reached. This makes it the faster option however with an increase in skipped steps, data quality may go down.
 
-![Depiction of DDIM](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/4a02d7e1-4132-4cbe-8686-eeb07b575de9)
+![Depiction of DDIM](./assets/DDIM_diagram.jpg)
 
 *Figure 4: Representation of the skipped steps in a DDIM (Markov chain) of forward diffusion process and reverse diffusion process. From Denoising Diffusion Implicit Models, by Song et al. 2022. Retrieved from https://arxiv.org/abs/2010.02502*
 
@@ -52,7 +52,7 @@ This comprises a pipeline of multiple diffusion models that generate images of i
 
 In this project the base resolution has been trained on images with dimensions of 128\*128\*3 and only one super-resolution was used for upscaling to 256\*256\*3.
 
-![Example of cascaded diffusion models with a photo of a dog](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/d42e88c6-9603-4afd-b82c-5f6d0616f619)
+![Example of cascaded diffusion models with a photo of a dog](./assets/Cascading_upsampling_example.png)
 *Figure 5: A cascaded pipeline of multiple diffusion models at increasing resoltions. From Cascaded Diffusion Models for High Fidelity Image Generation, by Ho et al. 2022. Retrieved from https://arxiv.org/abs/2106.15282*
 
 ### eDiffi: Text-to-Image Diffusion Models with an Ensemble of Expert Denoisers
@@ -60,7 +60,7 @@ This comprises an ensemble of diffusion models i.e multiple models, specialized 
 
 In this project only one dataset was trained using this approach but code supports training using this approach.
 
-![Depiction of ensemble of models generating an image](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/8651c67f-d791-4f16-976e-836d33152c6d)
+![Depiction of ensemble of models generating an image](./assets/Ensemble_Example_diagram.jpg)
 *Figure 6: An ensemble of diffusion models that are specialized for denoising at different intervals of the generative process. From eDiff-I: Text-to-Image Diffusion Models with an Ensemble of Expert Denoisers, by Balaji et al. 2023. Retrieved from https://arxiv.org/pdf/2211.01324.pdf*
 
 ## Requirements
@@ -84,23 +84,23 @@ The following are the checkpoints for trained models:
 
 ## Examples of generated outputs
 ### Anime_Portraits
-![Anime_Portraits](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/c81bc8fd-8e93-4cba-9297-f2a9ac0a0143)
+![Anime_Portraits](./assets/Anime_Portraits_output_example.jpg)
 
 ### Celebrity_Faces
-![Celeb_Faces](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/482b7896-c8ab-4ef4-97e1-7e3d6b6cfcf1)
+![Celeb_Faces](./assets/Celebrities_output_example.jpg)
 
 ### My_Body_Poses
 **Input (Conditional input displayed as a grid)**:
 
-![MyBodyPose_input](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/7d03ea79-da5a-4ad4-951e-fd1017e08b7f)
+![MyBodyPose_input](./assets/Stickman_Conditional_Input.jpg)
 
 **Output**:
 
-![MyBodyPose_output](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/3fa5fc25-7b16-46f6-ab99-f9cca907f8fc)
+![MyBodyPose_output](./assets/Me_Body_Pose_output_example.jpg)
 
 ### My_Face
 
-![MyFace](https://github.com/Vinmwaura/Simple-Diffusion-Model/assets/12788331/6f0b85a6-9d23-4592-9ccc-8e3de8d5fbf1)
+![MyFace](./assets/Me_Face_example.jpg)
 
 **NOTE**
 Text conditional input was not used in the project like with most text-to-image diffusion models however some form of single label, multi-label or conditional image input was used to steer the resulting output of the models.
